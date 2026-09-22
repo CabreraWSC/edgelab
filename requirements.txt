@@ -4,3 +4,4 @@ pandas
 plotly
 Pillow
 pytesseract
+streamlit-paste-button
