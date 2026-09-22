@@ -1,95 +1,111 @@
 import streamlit as st, pandas as pd, random, requests
+from PIL import Image
 
-st.set_page_config(page_title="EdgeLab v5.3", layout="wide")
+st.set_page_config(page_title="EdgeLab v6 CAP圖", layout="wide")
 KEY = st.secrets.get("API_FOOTBALL_KEY", "7822cb55a2f23f40aaccd107c8026785")
 HEAD = {"x-apisports-key": KEY}
 MAP = {"英超": (39,2023), "西甲": (140,2023), "歐聯": (2,2023), "日職": (98,2025)}
 
-# 修復舊紀錄key不一致
-if "bets" not in st.session_state:
+if "bets" not in st.session_state: st.session_state.bets=[]
+if st.session_state.bets and "投注額" not in st.session_state.bets[0]:
     st.session_state.bets=[]
-else:
-    # 如果舊紀錄係英文key，自動清空
-    if st.session_state.bets and "投注額" not in st.session_state.bets[0]:
-        st.session_state.bets=[]
 
-choice = st.sidebar.selectbox("揀聯賽", list(MAP.keys()))
+st.sidebar.title("模式")
+mode = st.sidebar.radio("選擇", ["API 自動","CAP圖分析 (無額度用)"])
 stake_input = st.sidebar.number_input("預設每注 $", 50, 10000, 100, 50)
-lid, season = MAP[choice]
-st.title(f"EdgeLab v5.3 - 最終穩定版")
 
-url = f"https://v3.football.api-sports.io/fixtures?league={lid}&season={season}&next=10"
-try:
-    games = requests.get(url, headers=HEAD, timeout=10).json().get("response", [])
-except:
-    games=[]
-if not games:
-    games=[{"fixture":{"id":1,"date":"2026-09-23"},"teams":{"home":{"name":"神戶勝利船"},"away":{"name":"鹿島鹿角"}}},
-           {"fixture":{"id":2,"date":"2026-09-23"},"teams":{"home":{"name":"川崎前鋒"},"away":{"name":"橫濱水手"}}}]
+st.title("EdgeLab v6 - CAP圖即時分析")
 
-def make_markets(home):
-    groups={
-        "讓球":[{"pick":f"{home} -0.25","odds":round(random.uniform(1.85,2.05),2),"prob":random.uniform(0.55,0.68)},
-                {"pick":f"{home} -0.5","odds":round(random.uniform(2.1,2.6),2),"prob":random.uniform(0.45,0.58)}],
-        "大細":[{"pick":"大 2.5","odds":round(random.uniform(1.85,2.1),2),"prob":random.uniform(0.52,0.65)},
-                {"pick":"細 2.5","odds":round(random.uniform(1.8,2.0),2),"prob":random.uniform(0.50,0.62)}],
-        "主客和":[{"pick":f"{home} 勝","odds":round(random.uniform(1.9,2.3),2),"prob":random.uniform(0.50,0.64)}]
-    }
-    for g in groups:
-        for m in groups[g]:
-            m["ev"]=m["prob"]*m["odds"]-1
-            m["ret"]=round(stake_input * m["odds"],2)
-    return groups
+# ===== 1. CAP圖功能 =====
+if mode == "CAP圖分析 (無額度用)":
+    st.info("API無額度時用呢個：上傳馬會過往對賽/近況/賠率CAP圖")
+    uploaded = st.file_uploader("上傳CAP圖 (可多張)", type=["png","jpg","jpeg"], accept_multiple_files=True)
+    if uploaded:
+        for up in uploaded:
+            img = Image.open(up)
+            st.image(img, width=300)
 
-for g in games:
-    home=g["teams"]["home"]["name"]; away=g["teams"]["away"]["name"]; fid=g["fixture"]["id"]
-    groups=make_markets(home)
-    all_markets = [m for lst in groups.values() for m in lst]
-    final = max(all_markets, key=lambda x: x["prob"]*0.6 + x["ev"]*0.4)
+    with st.form("cap_form"):
+        st.write("**人手核對/輸入 (OCR後核對)**")
+        c1,c2,c3 = st.columns(3)
+        home = c1.text_input("主隊", "神戶勝利船")
+        away = c2.text_input("客隊", "鹿島鹿角")
+        c1,c2,c3 = st.columns(3)
+        pick1 = c1.text_input("投注項 1", f"{home} -0.25")
+        odds1 = c1.number_input("賠率 1", 1.1, 5.0, 1.95)
+        prob1 = c1.slider("你評估命中% 1", 30, 80, 60)
+        pick2 = c2.text_input("投注項 2", "大 2.5")
+        odds2 = c2.number_input("賠率 2", 1.1, 5.0, 1.9)
+        prob2 = c2.slider("命中% 2", 30, 80, 55)
+        pick3 = c3.text_input("投注項 3", f"{home} 勝")
+        odds3 = c3.number_input("賠率 3", 1.1, 5.0, 2.1)
+        prob3 = c3.slider("命中% 3", 30, 80, 58)
 
-    with st.container(border=True):
-        st.write(f"### {home} vs {away}")
-        cols=st.columns(3)
-        for idx,(gname,markets) in enumerate(groups.items()):
-            with cols[idx]:
-                st.write(f"**{gname}**")
-                rows=[]
-                for m in markets:
-                    rows.append([m["pick"], m["odds"], f"{m['prob']*100:.1f}%", f"+{m['ev']*100:.1f}%", m["ret"]])
-                st.table(pd.DataFrame(rows, columns=["投注","賠率","命中","EV","回報$"]))
+        submit = st.form_submit_button("分析邊個最高命中+高回報低風險", type="primary")
+        if submit:
+            markets = [
+                {"pick":pick1,"odds":odds1,"prob":prob1/100,"ev":prob1/100*odds1-1},
+                {"pick":pick2,"odds":odds2,"prob":prob2/100,"ev":prob2/100*odds2-1},
+                {"pick":pick3,"odds":odds3,"prob":prob3/100,"ev":prob3/100*odds3-1},
+            ]
+            for m in markets:
+                m["score"] = m["prob"]*0.6 + m["ev"]*0.4
 
-        st.success(f"推薦: {final['pick']} @ {final['odds']} | 命中 {final['prob']*100:.1f}%")
-        c1,c2=st.columns([1,2])
-        real_stake=c1.number_input(f"金額 {fid}", 50,10000, stake_input, key=f"s{fid}")
-        if c2.button(f"落注 ${real_stake} -> 回報 ${round(real_stake*final['odds'],2)}", key=f"b{fid}", type="primary"):
-            st.session_state.bets.append({
-                "賽事":f"{home} vs {away}",
-                "項目":final["pick"],
-                "賠率":final["odds"],
-                "投注額":real_stake,
-                "回報額":round(real_stake*final["odds"],2),
-                "預期盈利":round(real_stake*final["ev"],2),
-            })
-            st.rerun()
+            best_hit = max(markets, key=lambda x: x["prob"])
+            best_final = max(markets, key=lambda x: x["score"])
 
-st.divider()
-st.subheader("投注紀錄")
-if st.session_state.bets:
-    # 用get安全讀取，唔會再KeyError
-    df=pd.DataFrame(st.session_state.bets)
-    st.table(df)
+            st.divider()
+            df = pd.DataFrame([{"投注":m["pick"],"賠率":m["odds"],"命中":f"{m['prob']*100:.0f}%","EV":f"+{m['ev']*100:.1f}%","綜合分":f"{m['score']:.2f}"} for m in markets])
+            st.table(df)
+            st.success(f"組內最高命中: {best_hit['pick']} {best_hit['prob']*100:.0f}%")
+            st.success(f"最終推薦 (高命中+高回報低風險): **{best_final['pick']}** @ {best_final['odds']} EV +{best_final['ev']*100:.1f}%")
 
-    total_stake = sum([b.get("投注額",0) for b in st.session_state.bets])
-    total_return = sum([b.get("回報額",0) for b in st.session_state.bets])
-    total_profit = sum([b.get("預期盈利",0) for b in st.session_state.bets])
+            if st.button(f"加入模擬紀錄 ${stake_input}"):
+                st.session_state.bets.append({
+                    "賽事":f"{home} vs {away} (CAP圖)",
+                    "項目":best_final["pick"],
+                    "賠率":best_final["odds"],
+                    "投注額":stake_input,
+                    "回報額":round(stake_input*best_final["odds"],2),
+                    "預期盈利":round(stake_input*best_final["ev"],2),
+                })
+                st.rerun()
 
-    m1,m2,m3=st.columns(3)
-    m1.metric("總投注額", f"${total_stake}")
-    m2.metric("總回報額", f"${total_return}")
-    m3.metric("預期盈利", f"${total_profit:.0f} ROI {total_profit/total_stake*100:.1f}%" if total_stake else "$0")
-
-    if st.button("清紀錄"):
-        st.session_state.bets=[]
-        st.rerun()
 else:
-    st.write("暫無紀錄")
+    # ===== 2. 原有API模式 =====
+    choice = st.sidebar.selectbox("揀聯賽", list(MAP.keys()))
+    lid, season = MAP[choice]
+    url = f"https://v3.football.api-sports.io/fixtures?league={lid}&season={season}&next=5"
+    try: games = requests.get(url, headers=HEAD, timeout=10).json().get("response", [])
+    except: games=[]
+    if not games:
+        st.warning("API無額度，請切換去左邊 CAP圖分析模式")
+        games=[{"fixture":{"id":1},"teams":{"home":{"name":"神戶"},"away":{"name":"鹿島"}}}]
+
+    def make_markets(home):
+        gs=[{"pick":f"{home} -0.25","odds":round(random.uniform(1.85,2.05),2),"prob":random.uniform(0.55,0.68)},
+            {"pick":"大 2.5","odds":round(random.uniform(1.85,2.1),2),"prob":random.uniform(0.52,0.65)},
+            {"pick":f"{home} 勝","odds":round(random.uniform(1.9,2.3),2),"prob":random.uniform(0.50,0.64)}]
+        for m in gs: m["ev"]=m["prob"]*m["odds"]-1; m["score"]=m["prob"]*0.6+m["ev"]*0.4
+        return gs
+
+    for g in games:
+        home=g["teams"]["home"]["name"]; away=g["teams"]["away"]["name"]; fid=g["fixture"]["id"]
+        markets=make_markets(home)
+        final=max(markets, key=lambda x: x["score"])
+        with st.container(border=True):
+            st.write(f"### {home} vs {away}")
+            st.table(pd.DataFrame([{"投注":m["pick"],"賠率":m["odds"],"命中":f"{m['prob']*100:.1f}%","EV":f"+{m['ev']*100:.1f}%"} for m in markets]))
+            if st.button(f"落注 {final['pick']} ${stake_input}", key=f"b{fid}"):
+                st.session_state.bets.append({"賽事":f"{home} vs {away}","項目":final["pick"],"賠率":final["odds"],"投注額":stake_input,"回報額":round(stake_input*final["odds"],2),"預期盈利":round(stake_input*final["ev"],2)})
+                st.rerun()
+
+# 紀錄
+st.divider()
+st.subheader("模擬投注紀錄 (實證用)")
+if st.session_state.bets:
+    st.table(pd.DataFrame(st.session_state.bets))
+    total = sum([b.get("投注額",0) for b in st.session_state.bets])
+    profit = sum([b.get("預期盈利",0) for b in st.session_state.bets])
+    st.metric("總預期盈利", f"${profit:.0f}", f"ROI {profit/total*100:.1f}%" if total else "")
+    if st.button("清紀錄"): st.session_state.bets=[]; st.rerun()
