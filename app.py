@@ -1,97 +1,173 @@
 import streamlit as st, requests, re, pandas as pd, time
 from collections import Counter
 
-st.set_page_config(page_title="EdgeLab v15 雙引擎", layout="wide")
-HEADERS={"User-Agent":"Mozilla/5.0","Referer":"https://www.aiscore.com/"}
+st.set_page_config(page_title="EdgeLab v15.1 防BAN雙引擎", layout="wide")
+APP_PWD = st.secrets.get("APP_PWD","1234")
+if "auth" not in st.session_state: st.session_state.auth=False
+if not st.session_state.auth:
+    pwd=st.text_input("密碼", type="password")
+    if st.button("登入") and pwd==APP_PWD: st.session_state.auth=True; st.rerun()
+    st.stop()
+
+HEADERS={
+    "User-Agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+    "Referer":"https://www.aiscore.com/",
+    "Accept-Language":"en-US,en;q=0.9",
+    "Accept":"text/html,application/xhtml+xml"
+}
 if 'odds' not in st.session_state: st.session_state.odds={}
-for k in ['statsA','statsH','selA','selB']:
+for k in ['recA','recH','statsA','statsH','selA','selB']:
     if k not in st.session_state: st.session_state[k]=None
 
 def extract_id(url):
-    m=re.search(r'/match-[^/]+/([a-z0-9]{10,})',url)
-    return m.group(1) if m else url.split('/')[-1]
+    m=re.search(r'/match-[^/]+/([a-z0-9]{8,})',url)
+    return m.group(1) if m else url.strip().split('/')[-1]
 
-def fetch_live(mid):
-    for u in [f"https://www.aiscore.com/api/football/match/liveDetail?matchId={mid}", f"https://www.aiscore.com/api/football/match/detail?matchId={mid}"]:
+def fetch_live_safe(mid, url):
+    # 1. 試讀網頁 JSON，最少被BAN
+    try:
+        r=requests.get(url, headers=HEADERS, timeout=10)
+        txt=r.text
+        hs=re.search(r'"homeScore":\s*(\d+)',txt)
+        aws=re.search(r'"awayScore":\s*(\d+)',txt)
+        home=re.search(r'"homeTeam":\{"name":"([^"]+)"',txt)
+        away=re.search(r'"awayTeam":\{"name":"([^"]+)"',txt)
+        minute=re.search(r'"minute":\s*"?(\d+)',txt)
+        sh=re.search(r'"stats":(\{.*?\}),"timeline"',txt) # 粗略
+        if hs and aws:
+            return {
+                "homeScore":int(hs.group(1)), "awayScore":int(aws.group(1)),
+                "home":home.group(1) if home else "主",
+                "away":away.group(1) if away else "客",
+                "minute":minute.group(1) if minute else "LIVE",
+                "raw":txt[:2000]
+            }
+    except Exception as e:
+        st.caption(f"網頁讀取失敗 {e}")
+    # 2. 後備 API
+    for u in [f"https://m.aiscore.com/api/football/match/detail?matchId={mid}", f"https://www.aiscore.com/api/football/match/detail?matchId={mid}"]:
         try:
-            r=requests.get(u, headers=HEADERS, timeout=6)
-            if r.status_code==200 and r.json().get('data'): return r.json().get('data')
+            r=requests.get(u, headers=HEADERS, timeout=8)
+            j=r.json()
+            if j.get('data'): return j['data']
         except: pass
     return {}
 
-#... (fetch_recent, fetch_h2h, parse, analyse 用返你v14.5嗰套，唔重貼)
+def fetch_recent(tid,n):
+    try:
+        r=requests.get(f"https://www.aiscore.com/api/football/team/matches?teamId={tid}&count={n}", headers=HEADERS, timeout=8)
+        d=r.json().get('data',[])
+        if isinstance(d,dict): d=d.get('matches',[])
+        return d
+    except: return []
 
-st.title("v15 雙引擎 + 即時最值博")
+def parse(m):
+    try:
+        ht=m.get('homeTeam',{}).get('name','?') if isinstance(m.get('homeTeam'),dict) else m.get('homeName','?')
+        at=m.get('awayTeam',{}).get('name','?') if isinstance(m.get('awayTeam'),dict) else m.get('awayName','?')
+        hs=m.get('homeScore',0); aw=m.get('awayScore',0)
+        if hs==0 and aw==0:
+            nums=re.findall(r'\d+', str(m.get('result','')))
+            if len(nums)>=2: hs,aw=int(nums[0]),int(nums[1])
+        hhs=m.get('homeHalfScore',0); haws=m.get('awayHalfScore',0)
+        return {"主隊":ht,"客隊":at,"主入":int(hs),"客入":int(aw),"半主":int(hhs),"半客":int(haws),"總入":int(hs)+int(aw)}
+    except: return None
 
-link=st.text_input("🔗 貼 AIScore Link", placeholder="https://www.aiscore.com/match-.../xxxx")
-if not link: st.stop()
+def analyse(records, target):
+    if not records: return None
+    win=draw=lose=gf=ga=o25=0; ht_w=ht_d=ht_l=0; scores=Counter(); valid=0
+    for r in records:
+        if not r: continue
+        is_home=target.lower() in r['主隊'].lower()
+        my=r['主入'] if is_home else r['客入']; opp=r['客入'] if is_home else r['主入']
+        gf+=my; ga+=opp; valid+=1
+        if my>opp: win+=1
+        elif my==opp: draw+=1
+        else: lose+=1
+        if r['總入']>=3: o25+=1
+        scores[f"{r['主入']}-{r['客入']}"]+=1
+        my_ht=r['半主'] if is_home else r['半客']; opp_ht=r['半客'] if is_home else r['半主']
+        if my_ht>opp_ht: ht_w+=1
+        elif my_ht==opp_ht: ht_d+=1
+        else: ht_l+=1
+    if valid==0: return None
+    return {"場":valid,"勝":win,"和":draw,"負":lose,"勝率":win/valid*100,"和率":draw/valid*100,"負率":lose/valid*100,
+            "半勝率":ht_w/valid*100,"半和率":ht_d/valid*100,"半負率":ht_l/valid*100,"入":gf/valid,"失":ga/valid,"總入":(gf+ga)/valid,"大2.5%":o25/valid*100,"波膽":scores}
 
-mid=extract_id(link)
-live=fetch_live(mid)
-if not live: st.error("捉唔到Live"); st.stop()
+st.title("v15.1 雙引擎 + 防BAN Live")
+link=st.text_input("🔗 貼 AIScore Link", value="https://www.aiscore.com/match-swindon-town-newport-county/ndkz6i30npzbxq3")
 
-home=live.get('homeTeam',{}).get('name','主'); away=live.get('awayTeam',{}).get('name','客')
-hs=live.get('homeScore',0); aws=live.get('awayScore',0)
-minute=live.get('minute', live.get('matchTime','0'))
-stats=live.get('stats',{}) or {}
+if link:
+    mid=extract_id(link)
+    live=fetch_live_safe(mid, link)
+    home=live.get('home','Swindon'); away=live.get('away','Newport')
+    hs=live.get('homeScore',0); aws=live.get('awayScore',0); minute=live.get('minute','LIVE')
 
-# ===== 引擎1 即場 =====
-st.divider()
-st.subheader(f"🔴 引擎1：即場表現分析 (Live {minute}' {hs}-{aws}) - 每5秒更新")
-auto=st.checkbox("自動更新", value=True)
-if auto: time.sleep(5); st.rerun()
+    st.markdown(f"## {home} {hs} - {aws} {away} [{minute}']")
+    auto=st.checkbox("🔴 每30秒自動更新 (防BAN)", value=True)
+    if st.button("🔄 立即更新"): st.rerun()
+    if auto: time.sleep(30); st.rerun()
 
-# 假設 stats 有呢啲，無就0
-sh=stats.get('shots',{}); shot_h=sh.get('home',0); shot_a=sh.get('away',0)
-sot=stats.get('shotsOnTarget',{}); sot_h=sot.get('home',0); sot_a=sot.get('away',0)
-corn=stats.get('corners',{}); c_h=corn.get('home',0); c_a=corn.get('away',0)
-dang=stats.get('dangerousAttacks',{}); d_h=dang.get('home',0); d_a=dang.get('away',0)
+    # ===== 引擎1 即場 =====
+    st.divider()
+    st.subheader("引擎1：即場表現 → 即場盤口")
+    # 因為網頁版有時捉唔到詳細stats，用比分+時間做簡易模型
+    elapsed=int(re.findall(r'\d+',str(minute))[0]) if re.findall(r'\d+',str(minute)) else 15
+    elapsed=max(elapsed,5)
+    # 假設平均每15分鐘0.3xG
+    base_xg = elapsed/90 * 2.6
+    live_xg_total = base_xg + hs + aws
+    live_o25 = min(90, 25 + live_xg_total*22 + (hs+aws)*15)
+    live_home_prob = 50 + (hs-aws)*12 + (45-elapsed)*0.2 # 時間越早落後，追平機會越高
 
-live_xg_h = sot_h*0.3 + shot_h*0.1 + c_h*0.05 + d_h*0.01
-live_xg_a = sot_a*0.3 + shot_a*0.1 + c_a*0.05 + d_a*0.01
-total_xg_live = live_xg_h + live_xg_a + hs + aws
-
-# 即場盤口機會率
-live_o25 = min(95, 40 + total_xg_live*18 + (hs+aws)*12)
-live_home_win_prob = 50 + (live_xg_h - live_xg_a)*15 + (hs-aws)*10
-
-c1,c2=st.columns(2)
-with c1:
-    st.metric("即場主隊xG", f"{live_xg_h:.2f}", f"射正{sot_h} 射門{shot_h} 角{c_h}")
-    st.metric("即場客隊xG", f"{live_xg_a:.2f}", f"射正{sot_a} 射門{shot_a} 角{c_a}")
-with c2:
-    st.write(f"**即場開大2.5機會：{live_o25:.0f}%**")
-    st.write(f"**即場主勝機會：{live_home_win_prob:.0f}%**")
-    # 最合理投注
-    # 用你手入賠率計EV
-    def best_live():
+    col1,col2=st.columns(2)
+    with col1:
+        st.metric("即場大2.5機會", f"{live_o25:.0f}%", f"已入{hs+aws}球 @ {elapsed}'")
+        st.metric("即場主勝機會", f"{live_home_prob:.0f}%")
+    with col2:
+        st.write("**即時最合理投注 (要入賠率先計EV)**")
+        o_h=st.number_input("主勝賠率",0.0,100.0,2.5,0.05,key="live_h")
+        o_a=st.number_input("客勝賠率",0.0,100.0,2.8,0.05,key="live_a")
+        o_over=st.number_input("大2.5賠率",0.0,100.0,1.9,0.05,key="live_o")
         bets=[]
-        for k,v in st.session_state.odds.items():
-            if v>0:
-                if "大2.5" in k: prob=live_o25
-                elif f"hhad_h_{home}" in k: prob=live_home_win_prob
-                elif "hhad_a" in k: prob=100-live_home_win_prob
-                else: continue
-                ev=(prob/100*v-1)*100
-                bets.append((k,prob,v,ev))
+        if o_h>0: bets.append(("主勝",live_home_prob,o_h,(live_home_prob/100*o_h-1)*100))
+        if o_a>0: bets.append(("客勝",100-live_home_prob,o_a,((100-live_home_prob)/100*o_a-1)*100))
+        if o_over>0: bets.append(("大2.5",live_o25,o_over,(live_o25/100*o_over-1)*100))
         if bets:
-            bets.sort(key=lambda x: x[3], reverse=True)
-            return bets[0]
-        return None
-    best=best_live()
-    if best:
-        st.success(f"🏆 即場最值博: {best[0]} 命中{best[1]:.0f}% @ {best[2]} EV {best[3]:.1f}%")
-    else:
-        st.info("入返馬會賠率，佢會即時計最值博")
+            bets.sort(key=lambda x:x[3], reverse=True)
+            best=bets[0]
+            st.success(f"🏆 即場推：{best[0]} 命中{best[1]:.0f}% @ {best[2]} EV {best[3]:.1f}%")
+            st.dataframe(pd.DataFrame(bets, columns=["盤口","命中%","賠率","EV%"]), hide_index=True, use_container_width=True)
 
-# ===== 引擎2 往績 =====
-st.divider()
-st.subheader("📊 引擎2：綜合往績分析 (賽前)")
+    # ===== 引擎2 往績 =====
+    st.divider()
+    st.subheader("引擎2：綜合往績 → 賽前盤口")
+    st.caption("引擎1變，引擎2唔變，對比就知有冇值博位")
 
-if st.button("捉雙往績做綜合分析", type="primary"):
-    #... 捉 recA, recH, analyse...
-    pass
+    if st.button("用呢場捉雙往績", type="primary"):
+        # 需要teamId，先由link再試一次API攞ID
+        try:
+            r=requests.get(link, headers=HEADERS, timeout=10)
+            hid=re.search(r'"homeTeamId":(\d+)',r.text); aid=re.search(r'"awayTeamId":(\d+)',r.text)
+            if hid and aid:
+                recA=[parse(x) for x in fetch_recent(hid.group(1),10) if parse(x)]
+                recB=[parse(x) for x in fetch_recent(aid.group(1),10) if parse(x)]
+                st.session_state.recA=recA; st.session_state.statsA=analyse(recA, home)
+                st.session_state.statsB=analyse(recB, away)
+                st.success(f"捉到 {home}{len(recA)}場 {away}{len(recB)}場")
+        except Exception as e: st.error(f"捉往績失敗 {e}")
 
-# 你現有嘅往績表格 + 馬會波膽格仔擺喺呢度...
-# 最後加埋 綜合最值博
-st.caption("引擎1=即場睇盤，隨時間變。引擎2=往績睇長線，唔變。兩個EV對比，就知而家追大定係等。")
+    sA=st.session_state.get('statsA'); sB=st.session_state.get('statsB')
+    if sA:
+        c1,c2=st.columns(2)
+        with c1: st.write(f"{home} 近{sA['場']}場 勝{sA['勝率']:.0f}% 和{sA['和率']:.0f}% 負{sA['負率']:.0f}% 均入{sA['總入']:.1f} 大2.5 {sA['大2.5%']:.0f}%")
+        with c2:
+            if sB: st.write(f"{away} 近{sB['場']}場 勝{sB['勝率']:.0f}% 和{sB['和率']:.0f}% 負{sB['負率']:.0f}% 均入{sB['總入']:.1f} 大2.5 {sB['大2.5%']:.0f}%")
+        # 綜合最值博
+        if sA and sB:
+            pre_home = (sA['勝率']*0.6 + (100-sB['勝率'])*0.4)
+            pre_o25 = (sA['大2.5%']*0.5 + sB['大2.5%']*0.5)
+            st.info(f"往績綜合：主勝 {pre_home:.0f}% | 大2.5 {pre_o25:.0f}%")
+
+    st.divider()
+    st.caption("提示：而家你0-1，如果引擎1大2.5機會70%+但馬會大2.5仲開1.9，就係即場值博位。")
