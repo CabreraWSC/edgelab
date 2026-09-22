@@ -3,11 +3,11 @@ from PIL import Image, ImageOps
 import pytesseract
 from collections import Counter
 
-st.set_page_config(page_title="EdgeLab v8.6.1 完整版", layout="wide")
+st.set_page_config(page_title="EdgeLab v8.6.2 杯賽版", layout="wide")
 
 if "auth" not in st.session_state: st.session_state.auth=False
 if not st.session_state.auth:
-    st.title("🔒 EdgeLab v8.6.1")
+    st.title("🔒 EdgeLab v8.6.2")
     pwd=st.text_input("密碼", type="password")
     if st.button("登入"):
         if pwd==st.secrets.get("APP_PWD","1234"):
@@ -90,9 +90,9 @@ def calc_h2h(text_block, teamA, teamB):
             if a>b: winA+=1
             elif b>a: winB+=1
             else: draw+=1
-        return {"場數":total,"A勝%":round(winA/total*100,1),"B勝%":round(winB/total*100,1),"和%":round(draw/total*100,1),"大球%":round(over25/total*100,1),"A勝":winA,"B勝":winB,"和":draw,"隊名":info,"提示":f"已自動過濾半場括號，只計全場 {total}場","matched":0}
+        return {"場數":total,"A勝%":round(winA/total*100,1),"B勝%":round(winB/total*100,1),"和%":round(draw/total*100,1),"大球%":round(over25/total*100,1),"A勝":winA,"B勝":winB,"和":draw,"隊名":info,"提示":f"已過濾半場，只計全場 {total}場","matched":0}
     valid=winA+winB+draw
-    return {"場數":total,"A勝%":round(winA/valid*100,1),"B勝%":round(winB/valid*100,1),"和%":round(draw/valid*100,1),"大球%":round(over25/total*100,1),"A勝":winA,"B勝":winB,"和":draw,"隊名":info,"提示":f"已過濾半場，只計全場 {matched}/{total}場","matched":matched}
+    return {"場數":total,"A勝%":round(winA/valid*100,1),"B勝%":round(winB/valid*100,1),"和%":round(draw/valid*100,1),"大球%":round(over25/total*100,1),"A勝":winA,"B勝":winB,"和":draw,"隊名":info,"提示":f"已過濾半場 {matched}/{total}場","matched":matched}
 
 def calc_recent(text_block):
     info=extract_teams_and_scores(text_block)
@@ -105,10 +105,22 @@ def calc_recent(text_block):
         if a+b>=3: over+=1
     return {"場數":total,"勝%":round(win/total*100,1),"大球%":round(over/total*100,1),"勝":win}
 
-def extract_odds(text):
-    return re.findall(r"(\d+\.\d+)", text)
+def extract_odds(text): return re.findall(r"(\d+\.\d+)", text)
 
-st.sidebar.title("EdgeLab v8.6.1")
+# 全聯賽字典 - 你97次任用
+LEAGUES = {
+    "英格蘭 - 英超":39, "英格蘭 - 英冠":40, "英格蘭 - 英甲":41, "英格蘭 - 英乙":42,
+    "英格蘭 - 足總盃":45, "英格蘭 - 聯賽盃":46, "英格蘭 - 聯賽錦標 EFL Trophy 今晚":48,
+    "西班牙 - 西甲":140, "西班牙 - 西乙":141,
+    "德國 - 德甲":78, "德國 - 德乙":79, "德國 - 德國盃":81,
+    "意大利 - 意甲":135, "意大利 - 意乙":136,
+    "法國 - 法甲":61, "法國 - 法乙":62,
+    "歐洲 - 歐聯":2, "歐洲 - 歐霸":3, "歐洲 - 歐協聯":848,
+    "日本 - J1":98, "日本 - J2":99, "韓國 - K1":292, "韓國 - K2":293,
+    "美國 - 美職":253
+}
+
+st.sidebar.title("EdgeLab v8.6.2")
 mode=st.sidebar.radio("模式", ["CAP圖分析","API分析","落注紀錄"])
 stake=st.sidebar.number_input("每注 $", 50, 10000, 100, 50)
 if st.sidebar.button("🧹 一鍵清空", type="primary"):
@@ -117,12 +129,11 @@ if st.sidebar.button("🧹 一鍵清空", type="primary"):
 if st.sidebar.button("登出"): st.session_state.auth=False; st.rerun()
 
 if mode=="CAP圖分析":
-    st.title("📊 CAP圖分析 v8.6.1")
+    st.title("📊 CAP圖分析 v8.6.2")
     c1,c2=st.columns(2)
     with c1: home=st.text_input("主隊", value=st.session_state.team_names["主隊"]); st.session_state.team_names["主隊"]=home
     with c2: away=st.text_input("客隊", value=st.session_state.team_names["客隊"]); st.session_state.team_names["客隊"]=away
-
-    ups=st.file_uploader("數據圖", type=["png","jpg","jpeg"], accept_multiple_files=True, key="ud861")
+    ups=st.file_uploader("數據圖", type=["png","jpg","jpeg"], accept_multiple_files=True, key="ud862")
     if ups:
         for u in ups:
             fid=f"{u.name}_{u.size}"
@@ -136,15 +147,14 @@ if mode=="CAP圖分析":
         for idx,item in enumerate(st.session_state.data_imgs):
             with cols[idx%3]:
                 st.image(item["img"], use_container_width=True)
-                cat=st.selectbox(f"圖{idx+1}", ["對賽往績","主隊近期","客隊近期"], index=0, key=f"cat861_{idx}")
+                cat=st.selectbox(f"圖{idx+1}", ["對賽往績","主隊近期","客隊近期"], index=0, key=f"cat862_{idx}")
                 st.session_state.data_imgs[idx]["cat"]=cat
                 txt=ocr_smart(item["img"])
                 st.session_state.data_texts[cat]+=txt+"\n"
                 with st.expander(f"OCR {idx+1}"): st.text(txt[:800])
-                if st.button("刪", key=f"del861_{idx}"):
+                if st.button("刪", key=f"del862_{idx}"):
                     st.session_state.uploaded_ids.discard(item["fid"]); st.session_state.data_imgs.pop(idx); st.rerun()
-
-    ups2=st.file_uploader("賠率圖", type=["png","jpg","jpeg"], accept_multiple_files=True, key="uo861")
+    ups2=st.file_uploader("賠率圖", type=["png","jpg","jpeg"], accept_multiple_files=True, key="uo862")
     if ups2:
         for u in ups2:
             fid=f"{u.name}_{u.size}"
@@ -153,7 +163,6 @@ if mode=="CAP圖分析":
                 st.session_state.odds_imgs.append({"img":img,"fid":fid})
                 st.session_state.odds_ids.add(fid)
                 st.session_state.odds_text+=ocr_smart(img)+"\n"
-
     if st.session_state.data_texts["對賽往績"]:
         h2h=calc_h2h(st.session_state.data_texts["對賽往績"], home, away)
         recentH=calc_recent(st.session_state.data_texts["主隊近期"])
@@ -161,69 +170,58 @@ if mode=="CAP圖分析":
         st.divider()
         st.subheader(f"⚔️ 對賽往績：{home} vs {away}")
         st.caption(h2h.get("提示",""))
-        if h2h["matched"]==0 and h2h["場數"]>0:
-            st.warning("隊名對唔上，用滑桿校正")
-            c1,c2,c3=st.columns(3)
-            with c1: manA=st.slider(f"{home} 勝",0,h2h["場數"],h2h["A勝"], key="ma861")
-            with c2: manB=st.slider(f"{away} 勝",0,h2h["場數"],h2h["B勝"], key="mb861")
-            with c3: manD=h2h["場數"]-manA-manB; st.metric("和", f"{manD}場")
-            if manD>=0:
-                h2h["A勝%"]=round(manA/h2h["場數"]*100,1); h2h["B勝%"]=round(manB/h2h["場數"]*100,1); h2h["和%"]=round(manD/h2h["場數"]*100,1)
-
         c1,c2,c3,c4=st.columns(4)
         with c1: st.metric(f"{home} 勝", f"{h2h['A勝%']}%", f"{h2h['A勝']}場")
         with c2: st.metric(f"{away} 勝", f"{h2h['B勝%']}%", f"{h2h['B勝']}場")
         with c3: st.metric("和局", f"{h2h['和%']}%", f"{h2h['和']}場")
         with c4: st.metric("大球率", f"{h2h['大球%']}%", f"{h2h['場數']}場")
-
         st.subheader("📈 近期")
         c1,c2=st.columns(2)
         with c1: st.metric(f"{home} 近期", f"{recentH['勝%']}%", f"{recentH['場數']}場")
         with c2: st.metric(f"{away} 近期", f"{recentA['勝%']}%", f"{recentA['場數']}場")
-
         st.divider()
-        st.subheader("🧠 綜合分析")
         prob_home = h2h["A勝%"]*0.6 + recentH["勝%"]*0.4
         st.write(f"**{home} 綜合勝率: {prob_home:.1f}%**")
         odds_list=extract_odds(st.session_state.odds_text)
         if odds_list:
-            st.write(f"賠率: {odds_list[:6]}")
             try:
                 odd_home=float(odds_list[0])
                 ev=prob_home/100*odd_home-1
                 st.metric("EV", f"{ev*100:.1f}%", f"賠率 {odd_home}")
-                if ev>0.1: st.success(f"✅ 有Value 落 {home}")
                 if st.button("記錄落注"):
                     st.session_state.bets.append({"對賽":f"{home} vs {away}","投注":home,"賠率":odd_home,"勝率":prob_home,"注碼":stake,"EV":ev})
                     st.success("已記錄")
             except: pass
 
 elif mode=="API分析":
-    st.title("🔌 API分析 - 唔使打ID")
-    leagues={"英超":39,"英冠":40,"英甲":41,"英乙":42,"西甲":140,"德甲":78,"意甲":135,"法甲":61,"歐聯":2,"日職":98,"韓K":292}
-    sel=st.selectbox("揀聯賽", list(leagues.keys()), index=3)
-    league_id=leagues[sel]
-    st.info(f"你揀咗 {sel}，ID={league_id}，史雲頓vs紐波特郡就係英乙42")
-
+    st.title("🔌 API分析 - 97次任用")
+    sel=st.selectbox("揀聯賽 (全部已加)", list(LEAGUES.keys()), index=6)
+    league_id=LEAGUES[sel]
+    st.success(f"你揀咗 {sel}，ID={league_id}，今晚史雲頓場就係呢個")
     api_key=st.text_input("API-Football Key", type="password", value=st.secrets.get("API_KEY",""))
-    if st.button("查詢今日賽程"):
-        if not api_key:
-            st.error("去 api-football.com 免費註冊攞Key，貼入Secrets API_KEY")
-        else:
-            try:
-                url=f"https://v3.football.api-sports.io/fixtures?league={league_id}&season=2024&next=10"
-                headers={"x-apisports-key":api_key}
-                r=requests.get(url, headers=headers, timeout=10)
-                if r.status_code==200:
-                    data=r.json()
-                    fixtures=data.get("response",[])
-                    st.success(f"搵到 {len(fixtures)} 場")
-                    for f in fixtures[:10]:
-                        st.write(f"{f['teams']['home']['name']} vs {f['teams']['away']['name']} - {f['fixture']['date']}")
-                else:
-                    st.error(f"API錯 {r.status_code} {r.text[:200]}")
-            except Exception as e:
-                st.error(str(e))
+    col1,col2=st.columns(2)
+    with col1: season=st.number_input("賽季", 2023, 2026, 2025)
+    with col2:
+        if st.button("查詢賽程", type="primary"):
+            if not api_key: st.error("未填Key")
+            else:
+                try:
+                    url=f"https://v3.football.api-sports.io/fixtures?league={league_id}&season={season}&next=20"
+                    headers={"x-apisports-key":api_key}
+                    r=requests.get(url, headers=headers, timeout=15)
+                    st.write(f"剩餘次數: {r.headers.get('x-ratelimit-requests-remaining','未知')}")
+                    if r.status_code==200:
+                        data=r.json()
+                        fixtures=data.get("response",[])
+                        st.success(f"搵到 {len(fixtures)} 場 {sel}")
+                        for f in fixtures:
+                            h=f['teams']['home']['name']; a=f['teams']['away']['name']; d=f['fixture']['date'][:16]
+                            st.write(f"**{h} vs {a}** - {d} - 狀態:{f['fixture']['status']['short']}")
+                            if "Swindon" in h or "Swindon" in a or "Newport" in h or "Newport" in a:
+                                st.info(f"⬆️ 搵到今晚目標: {h} vs {a}")
+                    else: st.error(f"錯 {r.status_code} {r.text[:300]}")
+                except Exception as e: st.error(str(e))
+    st.caption("你仲有97次，揀英聯賽錦標就會出到今晚史雲頓vs紐波特郡")
 
 else:
     st.title("💰 落注紀錄")
