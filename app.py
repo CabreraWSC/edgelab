@@ -2,12 +2,20 @@ import streamlit as st, re, pandas as pd, requests
 from PIL import Image, ImageOps
 import pytesseract
 from collections import Counter
+from datetime import date, timedelta
 
-st.set_page_config(page_title="EdgeLab v8.6.2 杯賽版", layout="wide")
+st.set_page_config(page_title="EdgeLab v8.7 終極版", layout="wide")
+
+# ===== 隱藏API - 外人睇唔到 =====
+# 去 Streamlit Cloud -> Settings -> Secrets 貼入：
+# API_KEY = "你個api-football key"
+# FOOTBALL_DATA_KEY = "football-data.org免費key (可選)"
+API_KEY = st.secrets.get("API_KEY","")
+FOOTBALL_DATA_KEY = st.secrets.get("FOOTBALL_DATA_KEY","")
 
 if "auth" not in st.session_state: st.session_state.auth=False
 if not st.session_state.auth:
-    st.title("🔒 EdgeLab v8.6.2")
+    st.title("🔒 EdgeLab v8.7")
     pwd=st.text_input("密碼", type="password")
     if st.button("登入"):
         if pwd==st.secrets.get("APP_PWD","1234"):
@@ -90,7 +98,7 @@ def calc_h2h(text_block, teamA, teamB):
             if a>b: winA+=1
             elif b>a: winB+=1
             else: draw+=1
-        return {"場數":total,"A勝%":round(winA/total*100,1),"B勝%":round(winB/total*100,1),"和%":round(draw/total*100,1),"大球%":round(over25/total*100,1),"A勝":winA,"B勝":winB,"和":draw,"隊名":info,"提示":f"已過濾半場，只計全場 {total}場","matched":0}
+        return {"場數":total,"A勝%":round(winA/total*100,1),"B勝%":round(winB/total*100,1),"和%":round(draw/total*100,1),"大球%":round(over25/total*100,1),"A勝":winA,"B勝":winB,"和":draw,"隊名":info,"提示":f"已過濾半場 {total}場","matched":0}
     valid=winA+winB+draw
     return {"場數":total,"A勝%":round(winA/valid*100,1),"B勝%":round(winB/valid*100,1),"和%":round(draw/valid*100,1),"大球%":round(over25/total*100,1),"A勝":winA,"B勝":winB,"和":draw,"隊名":info,"提示":f"已過濾半場 {matched}/{total}場","matched":matched}
 
@@ -107,20 +115,25 @@ def calc_recent(text_block):
 
 def extract_odds(text): return re.findall(r"(\d+\.\d+)", text)
 
-# 全聯賽字典 - 你97次任用
 LEAGUES = {
     "英格蘭 - 英超":39, "英格蘭 - 英冠":40, "英格蘭 - 英甲":41, "英格蘭 - 英乙":42,
-    "英格蘭 - 足總盃":45, "英格蘭 - 聯賽盃":46, "英格蘭 - 聯賽錦標 EFL Trophy 今晚":48,
-    "西班牙 - 西甲":140, "西班牙 - 西乙":141,
-    "德國 - 德甲":78, "德國 - 德乙":79, "德國 - 德國盃":81,
-    "意大利 - 意甲":135, "意大利 - 意乙":136,
-    "法國 - 法甲":61, "法國 - 法乙":62,
-    "歐洲 - 歐聯":2, "歐洲 - 歐霸":3, "歐洲 - 歐協聯":848,
-    "日本 - J1":98, "日本 - J2":99, "韓國 - K1":292, "韓國 - K2":293,
-    "美國 - 美職":253
+    "英格蘭 - 足總盃 FA Cup":45, "英格蘭 - 聯賽盃":46, "英格蘭 - 聯賽錦標 EFL Trophy (今晚)":48,
+    "西班牙 - 西甲":140, "德國 - 德甲":78, "意大利 - 意甲":135, "法國 - 法甲":61,
+    "歐聯":2, "歐霸":3, "日職":98, "韓K":292, "美職":253
 }
 
-st.sidebar.title("EdgeLab v8.6.2")
+# 免費API聯賽對照表
+FREE_LEAGUES = {
+    "TheSportsDB 免費免Key": {
+        "英聯賽錦標 EFL Trophy": 4450,
+        "英超": 4328, "英冠": 4329, "英甲": 4396, "英乙": 4397,
+        "足總盃": 4480, "西甲": 4335, "德甲": 4331, "意甲": 4332, "法甲": 4334,
+        "歐聯": 4480
+    },
+    "ESPN 免費免Key (自動)": "支援所有英格蘭低組別 + 美職"
+}
+
+st.sidebar.title("EdgeLab v8.7")
 mode=st.sidebar.radio("模式", ["CAP圖分析","API分析","落注紀錄"])
 stake=st.sidebar.number_input("每注 $", 50, 10000, 100, 50)
 if st.sidebar.button("🧹 一鍵清空", type="primary"):
@@ -129,11 +142,11 @@ if st.sidebar.button("🧹 一鍵清空", type="primary"):
 if st.sidebar.button("登出"): st.session_state.auth=False; st.rerun()
 
 if mode=="CAP圖分析":
-    st.title("📊 CAP圖分析 v8.6.2")
+    st.title("📊 CAP圖分析 v8.7 - 括號過濾")
     c1,c2=st.columns(2)
     with c1: home=st.text_input("主隊", value=st.session_state.team_names["主隊"]); st.session_state.team_names["主隊"]=home
     with c2: away=st.text_input("客隊", value=st.session_state.team_names["客隊"]); st.session_state.team_names["客隊"]=away
-    ups=st.file_uploader("數據圖", type=["png","jpg","jpeg"], accept_multiple_files=True, key="ud862")
+    ups=st.file_uploader("數據圖", type=["png","jpg","jpeg"], accept_multiple_files=True, key="ud87")
     if ups:
         for u in ups:
             fid=f"{u.name}_{u.size}"
@@ -147,14 +160,14 @@ if mode=="CAP圖分析":
         for idx,item in enumerate(st.session_state.data_imgs):
             with cols[idx%3]:
                 st.image(item["img"], use_container_width=True)
-                cat=st.selectbox(f"圖{idx+1}", ["對賽往績","主隊近期","客隊近期"], index=0, key=f"cat862_{idx}")
+                cat=st.selectbox(f"圖{idx+1}", ["對賽往績","主隊近期","客隊近期"], index=0, key=f"cat87_{idx}")
                 st.session_state.data_imgs[idx]["cat"]=cat
                 txt=ocr_smart(item["img"])
                 st.session_state.data_texts[cat]+=txt+"\n"
                 with st.expander(f"OCR {idx+1}"): st.text(txt[:800])
-                if st.button("刪", key=f"del862_{idx}"):
+                if st.button("刪", key=f"del87_{idx}"):
                     st.session_state.uploaded_ids.discard(item["fid"]); st.session_state.data_imgs.pop(idx); st.rerun()
-    ups2=st.file_uploader("賠率圖", type=["png","jpg","jpeg"], accept_multiple_files=True, key="uo862")
+    ups2=st.file_uploader("賠率圖", type=["png","jpg","jpeg"], accept_multiple_files=True, key="uo87")
     if ups2:
         for u in ups2:
             fid=f"{u.name}_{u.size}"
@@ -168,7 +181,7 @@ if mode=="CAP圖分析":
         recentH=calc_recent(st.session_state.data_texts["主隊近期"])
         recentA=calc_recent(st.session_state.data_texts["客隊近期"])
         st.divider()
-        st.subheader(f"⚔️ 對賽往績：{home} vs {away}")
+        st.subheader(f"⚔️ 對賽往績：{home} vs {away} (已過濾括號)")
         st.caption(h2h.get("提示",""))
         c1,c2,c3,c4=st.columns(4)
         with c1: st.metric(f"{home} 勝", f"{h2h['A勝%']}%", f"{h2h['A勝']}場")
@@ -181,7 +194,7 @@ if mode=="CAP圖分析":
         with c2: st.metric(f"{away} 近期", f"{recentA['勝%']}%", f"{recentA['場數']}場")
         st.divider()
         prob_home = h2h["A勝%"]*0.6 + recentH["勝%"]*0.4
-        st.write(f"**{home} 綜合勝率: {prob_home:.1f}%**")
+        st.metric("綜合勝率", f"{prob_home:.1f}%")
         odds_list=extract_odds(st.session_state.odds_text)
         if odds_list:
             try:
@@ -194,34 +207,89 @@ if mode=="CAP圖分析":
             except: pass
 
 elif mode=="API分析":
-    st.title("🔌 API分析 - 97次任用")
-    sel=st.selectbox("揀聯賽 (全部已加)", list(LEAGUES.keys()), index=6)
+    st.title("🔌 API分析 - 隱藏Key版")
+    st.caption(f"API-Football Key 狀態: {'✅已隱藏' if API_KEY else '❌未設定，去Secrets設定API_KEY'} | 剩餘次數會顯示")
+
+    sel=st.selectbox("揀聯賽 (付費API)", list(LEAGUES.keys()), index=6)
     league_id=LEAGUES[sel]
-    st.success(f"你揀咗 {sel}，ID={league_id}，今晚史雲頓場就係呢個")
-    api_key=st.text_input("API-Football Key", type="password", value=st.secrets.get("API_KEY",""))
-    col1,col2=st.columns(2)
-    with col1: season=st.number_input("賽季", 2023, 2026, 2025)
-    with col2:
-        if st.button("查詢賽程", type="primary"):
-            if not api_key: st.error("未填Key")
+
+    tab1, tab2, tab3 = st.tabs(["💰 API-Football (已隱藏Key)","🆓 免費API - 免Key 今晚用","📚 免費API說明"])
+
+    with tab1:
+        season=st.number_input("賽季", 2023, 2026, 2025, key="s87")
+        if st.button("查詢付費API", type="primary"):
+            if not API_KEY: st.error("去 Streamlit Cloud > Settings > Secrets 貼上 API_KEY = \"xxx\"")
             else:
                 try:
-                    url=f"https://v3.football.api-sports.io/fixtures?league={league_id}&season={season}&next=20"
-                    headers={"x-apisports-key":api_key}
+                    today=date.today().isoformat()
+                    next_week=(date.today()+timedelta(days=7)).isoformat()
+                    url=f"https://v3.football.api-sports.io/fixtures?league={league_id}&season={season}&from={today}&to={next_week}"
+                    headers={"x-apisports-key":API_KEY}
                     r=requests.get(url, headers=headers, timeout=15)
-                    st.write(f"剩餘次數: {r.headers.get('x-ratelimit-requests-remaining','未知')}")
+                    st.write(f"剩餘次數: {r.headers.get('x-ratelimit-requests-remaining','?')}")
                     if r.status_code==200:
-                        data=r.json()
-                        fixtures=data.get("response",[])
-                        st.success(f"搵到 {len(fixtures)} 場 {sel}")
+                        fixtures=r.json().get("response",[])
+                        if not fixtures: st.warning("付費API今晚無料，轉去免費Tab")
                         for f in fixtures:
-                            h=f['teams']['home']['name']; a=f['teams']['away']['name']; d=f['fixture']['date'][:16]
-                            st.write(f"**{h} vs {a}** - {d} - 狀態:{f['fixture']['status']['short']}")
-                            if "Swindon" in h or "Swindon" in a or "Newport" in h or "Newport" in a:
-                                st.info(f"⬆️ 搵到今晚目標: {h} vs {a}")
-                    else: st.error(f"錯 {r.status_code} {r.text[:300]}")
+                            st.write(f"{f['teams']['home']['name']} vs {f['teams']['away']['name']} - {f['fixture']['date'][:16]}")
+                    else: st.error(r.text[:300])
                 except Exception as e: st.error(str(e))
-    st.caption("你仲有97次，揀英聯賽錦標就會出到今晚史雲頓vs紐波特郡")
+
+    with tab2:
+        st.success("呢個完全免費，唔使Key，唔扣你97次，專查EFL Trophy今晚場")
+        if st.button("🔍 查詢今晚 EFL Trophy (免費)", type="primary"):
+            try:
+                url = "https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id=4450"
+                r = requests.get(url, timeout=10)
+                if r.status_code==200:
+                    events=r.json().get("events",[]) or []
+                    st.write(f"TheSportsDB 搵到 {len(events)} 場")
+                    for e in events:
+                        h=e.get("strHomeTeam",""); a=e.get("strAwayTeam",""); d=e.get("dateEvent","")
+                        st.write(f"{h} vs {a} - {d}")
+                        if "Swindon" in h or "Swindon" in a or "Newport" in h or "Newport" in a:
+                            st.success(f"✅ 目標: {h} vs {a}")
+
+                url2 = "https://site.api.espn.com/apis/site/v2/sports/soccer/eng.4/scoreboard"
+                r2 = requests.get(url2, timeout=10)
+                if r2.status_code==200:
+                    games=r2.json().get("events",[])[:20]
+                    for g in games:
+                        comp=g.get("competitions",[{}])[0]
+                        comps=comp.get("competitors",[])
+                        if len(comps)>=2:
+                            h=comps[0].get("team",{}).get("displayName",""); a=comps[1].get("team",{}).get("displayName","")
+                            if "Swindon" in h or "Swindon" in a or "Newport" in h or "Newport" in a:
+                                st.success(f"ESPN搵到: {h} vs {a} - 今晚")
+            except Exception as e: st.error(str(e))
+
+        st.link_button("BBC官方 EFL Trophy 賽程 (最後備用)", "https://www.bbc.com/sport/football/efl-trophy/scores-fixtures")
+
+    with tab3:
+        st.markdown("""
+        ### 🆓 免費API一覽 (已內建)
+        **1. TheSportsDB (完全免費 免Key)**
+        - 網址: thesportsdb.com/api.php
+        - 支援聯賽: 英超4328 / 英冠4329 / 英甲4396 / 英乙4397 / EFL Trophy 4450 / 足總盃4480 / 西甲4335 / 德甲4331 / 意甲4332 / 法甲4334 / 歐聯4480
+        - 優點: 唔使Key，任用，細杯都齊
+        - 缺點: 有時延遲1日
+
+        **2. ESPN API (完全免費 免Key)**
+        - 網址: site.api.espn.com/apis/site/v2/sports/soccer/
+        - 支援: eng.1英超 eng.2英冠 eng.3英甲 eng.4英乙+EFL Trophy / esp.1西甲 ger.1德甲 等
+        - 優點: 即時，今晚場一定有
+        - 缺點: 無賠率
+
+        **3. football-data.org (免費Key)**
+        - 去 football-data.org 免費攞Key，貼入Secrets FOOTBALL_DATA_KEY
+        - 支援: 8大聯賽，免費 10次/分鐘
+        - 缺點: 無英乙/EFL Trophy
+
+        **4. API-Football (你而家用緊)**
+        - 付費，100次/日，你仲有97次
+        - 支援全部聯賽，ID就係上面LEAGUES嗰堆
+        - Key已隱藏喺Secrets，外人睇唔到
+        """)
 
 else:
     st.title("💰 落注紀錄")
