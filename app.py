@@ -49,16 +49,18 @@ with c3:
         st.rerun()
 
 # 顯示所有已貼嘅圖
+# 顯示所有已貼嘅圖 - 修復版
 read_text = ""
 if st.session_state.cap_imgs:
     st.write(f"已收集 {len(st.session_state.cap_imgs)} 張CAP圖")
     cols = st.columns(3)
     for idx, im in enumerate(st.session_state.cap_imgs):
         with cols[idx % 3]:
-            st.image(im, caption=f"圖{idx+1}", use_column_width=True)
+            st.image(im, caption=f"圖{idx+1}", use_container_width=True)
         try:
             read_text += pytesseract.image_to_string(im, lang="chi_tra+eng") + "\n"
-        except: pass
+        except:
+            pass
     # 抽賠率
     odds = re.findall(r"\d\.\d{1,2}", read_text)
     if odds:
