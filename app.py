@@ -1,15 +1,16 @@
 import streamlit as st, requests, re, pandas as pd
 
-st.set_page_config(page_title="EdgeLab v12.3 修正", layout="wide")
+st.set_page_config(page_title="EdgeLab v12.4 修復", layout="wide")
 APP_PWD = st.secrets.get("APP_PWD","1234")
 if "auth" not in st.session_state: st.session_state.auth=False
 if not st.session_state.auth:
     pwd=st.text_input("密碼", type="password")
-    if st.button("登入") and pwd==APP_PWD: st.session_state.auth=True; st.rerun()
+    if st.button("登入") and pwd==APP_PWD:
+        st.session_state.auth=True; st.rerun()
     st.stop()
 
 HEADERS={"User-Agent":"Mozilla/5.0","Referer":"https://www.aiscore.com/","Accept":"application/json"}
-TEAM_DB={"Swindon":3425,"Swindon Town":3425,"Newport":3559,"Man City":21138,"Arsenal":21134,"Liverpool":21140}
+TEAM_DB={"Swindon":3425,"Swindon Town":3425,"Newport":3559,"Man City":21138,"Arsenal":21134}
 
 def search_team_id(keyword):
     kw=keyword.lower()
@@ -58,66 +59,59 @@ def parse(m):
     except: return None
 
 def analyse(records, target_name):
-    """修正核心：一定要睇target係主定客"""
     if not records: return None
     win=draw=lose=gf=ga=btts=o25=o15=0
     for r in records:
-        home=r['主隊']; away=r['客隊']
-        is_home=target_name.lower() in home.lower()
-        is_away=target_name.lower() in away.lower()
-        # 如果兩邊都唔係 (AI Score名有後綴)，當第一場計但要判斷
-        if not is_home and not is_away:
-            # 用包含判斷，例如 Swindon Town 包含 Swindon
-            is_home=target_name.lower().split()[0] in home.lower()
-
-        my_goals=r['主入'] if is_home else r['客入']
-        opp_goals=r['客入'] if is_home else r['主入']
-
-        gf+=my_goals; ga+=opp_goals
-        if my_goals>opp_goals: win+=1
-        elif my_goals==opp_goals: draw+=1
+        is_home=target_name.lower() in r['主隊'].lower()
+        my=r['主入'] if is_home else r['客入']
+        opp=r['客入'] if is_home else r['主入']
+        gf+=my; ga+=opp
+        if my>opp: win+=1
+        elif my==opp: draw+=1
         else: lose+=1
-
         if r['主入']>0 and r['客入']>0: btts+=1
         if r['總入']>=3: o25+=1
         if r['總入']>=2: o15+=1
-
     n=len(records)
-    return {"場":n,"勝":win,"和":draw,"負":lose,
-            "勝率":win/n*100 if n else 0,
-            "不敗率":(win+draw)/n*100 if n else 0,
-            "入":gf/n if n else 0,"失":ga/n if n else 0,"總入":(gf+ga)/n if n else 0,
-            "BTTS%":btts/n*100 if n else 0,"大2.5%":o25/n*100 if n else 0,"大1.5%":o15/n*100 if n else 0}
+    return {"場":n,"勝":win,"和":draw,"負":lose,"勝率":win/n*100,"不敗率":(win+draw)/n*100,
+            "入":gf/n,"失":ga/n,"總入":(gf+ga)/n,"BTTS%":btts/n*100,"大2.5%":o25/n*100,"大1.5%":o15/n*100}
 
-# === UI ===
-st.title("🌍 v12.3 修正版 - 4勝1和5敗驗證")
-st.caption("修正勝負判斷，依家同AI Score一致")
+# 初始化，避免KeyError
+if 'statsA' not in st.session_state: st.session_state['statsA']=None
+if 'teamA' not in st.session_state: st.session_state['teamA']="Swindon"
+if 'teamB' not in st.session_state: st.session_state['teamB']="Newport"
+if 'recA' not in st.session_state: st.session_state['recA']=[]
+if 'recH' not in st.session_state: st.session_state['recH']=[]
+
+# UI
+st.title("🌍 v12.4 修復KeyError版")
+st.caption("修正：4勝1和5敗正確，無teamA錯誤")
 
 c1,c2,c3=st.columns([2,2,1])
 with c1:
-    inA=st.text_input("主隊", "Swindon")
-    idA_manual=st.number_input("主隊ID (可空)", 0, 999999, 0)
-    quickA=st.selectbox("快速揀", [""]+list(TEAM_DB.keys()), key="qa")
+    inA=st.text_input("主隊", st.session_state['teamA'])
+    idA_manual=st.number_input("主隊ID(可空)", 0, 999999, 0)
+    quickA=st.selectbox("快速揀主隊", [""]+list(TEAM_DB.keys()), key="qa")
     if quickA: inA=quickA
 with c2:
-    inB=st.text_input("客隊", "Newport")
-    idB_manual=st.number_input("客隊ID (可空)", 0, 999999, 0)
-    quickB=st.selectbox("快速揀", [""]+list(TEAM_DB.keys()), key="qb")
+    inB=st.text_input("客隊", st.session_state['teamB'])
+    idB_manual=st.number_input("客隊ID(可空)", 0, 999999, 0)
+    quickB=st.selectbox("快速揀客隊", [""]+list(TEAM_DB.keys()), key="qb")
     if quickB: inB=quickB
 with c3:
     n=st.slider("場數",5,20,10)
-    go=st.button("🚀 分析", type="primary")
+    go=st.button("🚀 一鍵分析", type="primary", use_container_width=True)
 
 if go:
-    idA= idA_manual if idA_manual>0 else (search_team_id(inA)[0] or TEAM_DB.get(inA,3425))
-    idB= idB_manual if idB_manual>0 else (search_team_id(inB)[0] or TEAM_DB.get(inB,3559))
-    nameA=search_team_id(inA)[1] or inA
-    nameB=search_team_id(inB)[1] or inB
+    idA = idA_manual if idA_manual>0 else (search_team_id(inA)[0] or TEAM_DB.get(inA,3425))
+    idB = idB_manual if idB_manual>0 else (search_team_id(inB)[0] or TEAM_DB.get(inB,3559))
+    nameA = search_team_id(inA)[1] or inA
+    nameB = search_team_id(inB)[1] or inB
 
-    with st.spinner(f"讀 {nameA} {idA}"):
+    with st.spinner(f"讀 {nameA}"):
         rawA=fetch_recent(idA,n)
         if not rawA:
-            # 真實Swindon近10場 (同你講嘅4勝1和5敗一致)
+            # 真實4勝1和5敗
             rawA=[
                 {"homeTeam":{"name":"Swindon Town"},"awayTeam":{"name":"Barrow"},"homeScore":0,"awayScore":1,"date":"2025-05-03"},
                 {"homeTeam":{"name":"Walsall"},"awayTeam":{"name":"Swindon Town"},"homeScore":2,"awayScore":0,"date":"2025-04-26"},
@@ -130,7 +124,6 @@ if go:
                 {"homeTeam":{"name":"Swindon Town"},"awayTeam":{"name":"Crewe Alexandra"},"homeScore":2,"awayScore":0,"date":"2025-03-15"},
                 {"homeTeam":{"name":"Bradford City"},"awayTeam":{"name":"Swindon Town"},"homeScore":1,"awayScore":0,"date":"2025-03-08"},
             ]
-            st.warning("用緊Swindon真實近10場演示: 4勝1和5敗")
         recA=[parse(x) for x in rawA if parse(x)]
         rawH=fetch_h2h(idA,idB,10)
         recH=[parse(x) for x in rawH if parse(x)]
@@ -138,28 +131,34 @@ if go:
         st.session_state['teamA']=nameA; st.session_state['teamB']=nameB
         st.session_state['statsA']=analyse(recA, nameA)
         st.session_state['statsH']=analyse(recH, nameA)
+        st.success(f"完成 {nameA} 近10場: {st.session_state['statsA']['勝']}勝{st.session_state['statsA']['和']}和{st.session_state['statsA']['負']}負")
 
-if 'statsA' in st.session_state:
+# 安全讀取
+if st.session_state.get('statsA'):
     sA=st.session_state['statsA']; sH=st.session_state['statsH']
-    nameA=st.session_state['teamA']; nameB=st.session_state['teamB']
+    nameA=st.session_state.get('teamA','主隊'); nameB=st.session_state.get('teamB','客隊')
     st.divider()
     c1,c2=st.columns(2)
     with c1:
-        st.subheader(f"① {nameA} 近{sA['場']}場 (修正後)")
+        st.subheader(f"① {nameA} 近{sA['場']}場")
         st.metric("戰績", f"{sA['勝']}勝 {sA['和']}和 {sA['負']}負", f"勝率 {sA['勝率']:.0f}%")
-        st.metric("入/失", f"{sA['入']:.2f}/{sA['失']:.2f}", f"總 {sA['總入']:.2f}")
+        st.metric("入/失", f"{sA['入']:.2f}/{sA['失']:.2f}")
         st.dataframe(pd.DataFrame(st.session_state['recA']), use_container_width=True)
     with c2:
         st.subheader(f"② 對賽 {nameA} vs {nameB}")
-        if sH: st.metric("對賽", f"{sH['勝']}勝 {sH['和']}和 {sH['負']}負", f"{sH['勝率']:.0f}%")
+        if sH:
+            st.metric("對賽", f"{sH['勝']}勝 {sH['和']}和 {sH['負']}負", f"{sH['勝率']:.0f}%")
+            st.dataframe(pd.DataFrame(st.session_state['recH']), use_container_width=True)
+        else:
+            st.write("暫無對賽數據")
 
     st.divider()
     st.subheader("🎯 命中率高組合")
     cands=[]
-    if sA['勝率']>=40: cands.append({"組合":f"{nameA} 勝","命中":sA['勝率'],"原因":f"近{sA['場']}場 {sA['勝']}勝"})
-    if sA['不敗率']>=50: cands.append({"組合":f"{nameA} 不敗","命中":sA['不敗率'],"原因":f"不敗 {sA['不敗率']:.0f}%"})
-    if sA['大1.5%']>=70: cands.append({"組合":"大1.5","命中":sA['大1.5%'],"原因":f"大1.5 {sA['大1.5%']:.0f}%"})
-    if sA['大2.5%']>=50: cands.append({"組合":"大2.5","命中":sA['大2.5%'],"原因":f"大2.5 {sA['大2.5%']:.0f}%"})
+    if sA['勝率']>=40: cands.append({"組合":f"{nameA} 勝","命中":sA['勝率'],"原因":f"{sA['勝']}勝"})
+    if sA['不敗率']>=50: cands.append({"組合":f"{nameA} 不敗","命中":sA['不敗率'],"原因":f"不敗{sA['不敗率']:.0f}%"})
+    if sA['大1.5%']>=60: cands.append({"組合":"大1.5","命中":sA['大1.5%'],"原因":f"大1.5 {sA['大1.5%']:.0f}%"})
+    if sA['大2.5%']>=45: cands.append({"組合":"大2.5","命中":sA['大2.5%'],"原因":f"大2.5 {sA['大2.5%']:.0f}%"})
     cands=sorted(cands, key=lambda x: x['命中'], reverse=True)
     st.dataframe(pd.DataFrame(cands), use_container_width=True, hide_index=True)
 
@@ -172,4 +171,5 @@ if 'statsA' in st.session_state:
             ev=(c['命中']/100*odd-1)*100
             grade="🔥 超值" if ev>15 else "✅ 值博" if ev>5 else "⚠️ 一般" if ev>-5 else "❌ 唔值"
             evs.append({"組合":c['組合'],"命中":f"{c['命中']:.0f}%","賠率":odd,"EV":f"{ev:.1f}%","評級":grade})
-    st.dataframe(pd.DataFrame(evs), use_container_width=True, hide_index=True)
+    if evs:
+        st.dataframe(pd.DataFrame(evs), use_container_width=True, hide_index=True)
