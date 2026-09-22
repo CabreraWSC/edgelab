@@ -1,9 +1,8 @@
 import streamlit as st, pandas as pd, random, requests, re
 from PIL import Image
 import pytesseract
-from streamlit_paste_button import paste_image_button
 
-st.set_page_config(page_title="EdgeLab v7.5", layout="wide")
+st.set_page_config(page_title="EdgeLab v7.6", layout="wide")
 
 KEY = st.secrets.get("API_FOOTBALL_KEY", "7822cb55a2f23f40aaccd107c8026785")
 HEAD = {"x-apisports-key": KEY}
@@ -14,9 +13,9 @@ if "data_imgs" not in st.session_state: st.session_state.data_imgs=[]
 if "data_texts" not in st.session_state: st.session_state.data_texts={"對賽往績":"","主隊近期":"","客隊近期":""}
 
 st.sidebar.title("模式")
-mode = st.sidebar.radio("選擇", ["API 自動","CAP圖分析 (無額度用)"], key="mode75")
+mode = st.sidebar.radio("選擇", ["API 自動","CAP圖分析 (無額度用)"], key="mode76")
 stake_input = st.sidebar.number_input("預設每注 $", 50, 10000, 100, 50)
-st.title("EdgeLab v7.5 - 修復縮排版")
+st.title("EdgeLab v7.6 - 修復貼圖")
 
 def calc_stats(text_block):
     scores = re.findall(r"(\d+)\s*[:\-]\s*(\d+)", text_block)
@@ -41,29 +40,20 @@ if mode == "API 自動":
                 st.write(f"{home} vs {away}")
         except Exception as e:
             st.error(f"API錯 {e}")
-    if st.session_state.bets:
-        st.dataframe(pd.DataFrame(st.session_state.bets))
 
 else:
     st.subheader("📊 CAP圖兩步 - 多圖+分隊")
-    st.markdown("### 第1步：數據圖 (可放多張)")
+    st.info("💡 貼圖方法：去馬會Cap圖 -> Ctrl+C -> 返嚟呢度喺下面個上傳框入面直接 Ctrl+V 就得，唔使撳貼圖掣")
 
-    c1,c2,c3 = st.columns([2,2,1])
-    with c1:
-        ups = st.file_uploader("上傳多張數據圖", type=["png","jpg"], accept_multiple_files=True, key="up75")
-        if ups:
-            for u in ups:
-                st.session_state.data_imgs.append({"img": Image.open(u), "cat":"對賽往績"})
-    with c2:
-        paste = paste_image_button("📋 Ctrl+V 貼圖", key="paste75")
-        if paste and paste.image_data is not None:
-            st.session_state.data_imgs.append({"img": paste.image_data, "cat":"對賽往績"})
-            st.rerun()
-    with c3:
-        if st.button("清空數據"):
-            st.session_state.data_imgs=[]
-            st.session_state.data_texts={"對賽往績":"","主隊近期":"","客隊近期":""}
-            st.rerun()
+    st.markdown("### 第1步：數據圖 (可放多張)")
+    ups = st.file_uploader("上傳 / 直接喺呢度Ctrl+V貼多張數據圖", type=["png","jpg"], accept_multiple_files=True, key="up76")
+    if ups:
+        for u in ups:
+            # 避免重覆加入
+            already = [d["img"].tobytes()[:100] for d in st.session_state.data_imgs]
+            img = Image.open(u)
+            if img.tobytes()[:100] not in already:
+                st.session_state.data_imgs.append({"img": img, "cat":"對賽往績"})
 
     if st.session_state.data_imgs:
         st.write(f"已上傳 {len(st.session_state.data_imgs)} 張")
@@ -72,7 +62,7 @@ else:
             with col_img:
                 st.image(item["img"], width=200)
             with col_sel:
-                cat = st.selectbox(f"圖{idx+1}分類", ["對賽往績","主隊近期","客隊近期"], index=["對賽往績","主隊近期","客隊近期"].index(item["cat"]), key=f"cat75_{idx}")
+                cat = st.selectbox(f"圖{idx+1}分類", ["對賽往績","主隊近期","客隊近期"], index=["對賽往績","主隊近期","客隊近期"].index(item["cat"]), key=f"cat76_{idx}")
                 st.session_state.data_imgs[idx]["cat"]=cat
                 try:
                     txt = pytesseract.image_to_string(item["img"], lang="chi_tra+eng")
@@ -80,7 +70,7 @@ else:
                 except:
                     pass
             with col_del:
-                if st.button("刪", key=f"del75_{idx}"):
+                if st.button("刪", key=f"del76_{idx}"):
                     st.session_state.data_imgs.pop(idx)
                     st.rerun()
 
@@ -108,13 +98,10 @@ else:
 
     st.divider()
     st.markdown("### 第2步：賠率圖")
-    up2 = st.file_uploader("上傳賠率圖", type=["png","jpg"], key="up75_2", accept_multiple_files=True)
-    paste2 = paste_image_button("📋 貼賠率圖", key="paste75_2")
+    up2 = st.file_uploader("上傳 / 直接喺呢度Ctrl+V貼賠率圖", type=["png","jpg"], key="up76_2", accept_multiple_files=True)
     imgs2=[]
     if up2:
         for u in up2: imgs2.append(Image.open(u))
-    if paste2 and paste2.image_data is not None:
-        imgs2.append(paste2.image_data)
 
     odds_text=""
     for im in imgs2:
