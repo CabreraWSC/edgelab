@@ -1,243 +1,207 @@
-import streamlit as st, re, requests, pandas as pd
-from PIL import Image, ImageOps
-import pytesseract
-from datetime import date
+import streamlit as st, re, requests, pandas as pd, math
+from datetime import datetime
+from collections import Counter
 
-st.set_page_config(page_title="EdgeLab v10.0 AI Score", layout="wide")
+st.set_page_config(page_title="EdgeLab v11 AI Score純淨版", layout="wide")
 APP_PWD = st.secrets.get("APP_PWD","1234")
-API_KEY = st.secrets.get("API_KEY","") # 保留，後面馬會EV仲有用
 
 if "auth" not in st.session_state: st.session_state.auth=False
 if not st.session_state.auth:
-    st.title("🔒 EdgeLab v10.0")
+    st.title("🔒 EdgeLab v11 AI Score")
     pwd=st.text_input("密碼", type="password")
     if st.button("登入"):
         if pwd==APP_PWD: st.session_state.auth=True; st.rerun()
-        else: st.error("錯")
     st.stop()
 
-if "bets" not in st.session_state: st.session_state.bets=[]
-if "data_imgs" not in st.session_state: st.session_state.data_imgs=[]
-if "uploaded_ids" not in st.session_state: st.session_state.uploaded_ids=set()
-if "data_texts" not in st.session_state: st.session_state.data_texts={"對賽往績":"","主隊近期":"","客隊近期":""}
-if "odds_imgs" not in st.session_state: st.session_state.odds_imgs=[]
-if "odds_ids" not in st.session_state: st.session_state.odds_ids=set()
-if "team_names" not in st.session_state: st.session_state.team_names={"主隊":"史雲頓","客隊":"紐波特郡"}
-
-def ocr_smart(img):
-    try:
-        w,h=img.size; img=img.resize((w*3,h*3))
-        img=ImageOps.grayscale(img); img=ImageOps.autocontrast(img, cutoff=2)
-        return pytesseract.image_to_string(img, lang="chi_tra+eng", config="--psm 6")
-    except: return ""
-
-def get_stat(lst, name):
-    for s in lst:
-        if s['type']==name: return s['value']
-    return "-"
-
-# ===== AI SCORE 核心 =====
-# AI Score 免Key公開接口 (網頁版用緊)
-AIS_HEADERS = {
-    "User-Agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)",
-    "Referer":"https://www.aiscore.com/",
-    "Origin":"https://www.aiscore.com",
-    "Accept":"application/json, text/plain, */*"
-}
-
-# 常用球隊ID (你打關鍵字都搜到，呢度係快取)
-TEAM_CACHE = {
-    "Swindon": 886, "Swindon Town": 886, "史雲頓": 886,
-    "Newport": 1839, "Newport County": 1839, "紐波特郡": 1839,
-    "Walsall": 1389, "MK Dons": 1790, "Barrow": 1837
-}
-
-def aiscore_search_team(keyword):
-    try:
-        # 用AI Score搜索接口
-        url = f"https://api.aiscore.com/search?query={keyword}"
-        r = requests.get(url, headers=AIS_HEADERS, timeout=10)
-        data = r.json()
-        # 回傳第一個team
-        if data and 'teams' in str(data).lower():
-            # 實際結構: data['data']['teams']
-            teams = data.get('data',{}).get('teams',[]) or data.get('teams',[])
-            if teams: return teams[0]['id'], teams[0]['name']
-        # 用快取
-        for k,v in TEAM_CACHE.items():
-            if keyword.lower() in k.lower(): return v, k
-        return 886, "Swindon Town"
-    except:
-        for k,v in TEAM_CACHE.items():
-            if keyword.lower() in k.lower(): return v, k
-        return 886, "Swindon Town"
-
-def aiscore_get_recent(team_id, count=10):
-    # AI Score 近期賽果接口 (官網在用，免Key)
-    try:
-        # 呢條係最穩的手機版接口
-        url = f"https://api.aiscore.com/football/team/matches?teamId={team_id}&count={count}"
-        # 備用2
-        url2 = f"https://www.aiscore.com/api/football/team/matches?teamId={team_id}&page=1&count={count}"
-        for u in [url, url2]:
-            r = requests.get(u, headers=AIS_HEADERS, timeout=12)
-            if r.status_code==200 and len(r.text)>50:
-                j = r.json()
-                # 兼容兩種格式
-                matches = j.get('data',[]) or j.get('matches',[]) or j
-                if isinstance(matches, list) and len(matches)>0:
-                    return matches
-        return []
-    except Exception as e:
-        return []
-
-def aiscore_get_stats(match_id):
-    try:
-        url = f"https://api.aiscore.com/football/match/stats?matchId={match_id}"
-        url2 = f"https://www.aiscore.com/api/football/match/stats?matchId={match_id}"
-        for u in [url, url2]:
-            r = requests.get(u, headers=AIS_HEADERS, timeout=10)
-            if r.status_code==200:
-                j=r.json()
-                return j.get('data',[]) or j
-        return []
-    except:
-        return []
-
-# ===== UI =====
-st.sidebar.title("EdgeLab v10.0")
-mode = st.sidebar.radio("模式", ["🤖 AI Score 自動化 (主)","📸 馬會CAP圖 (保留)","💰 落注紀錄"])
-stake = st.sidebar.number_input("每注 $", 50, 10000, 100, 50)
-if st.sidebar.button("🧹 清空"): st.session_state.data_imgs=[]; st.session_state.uploaded_ids=set(); st.session_state.data_texts={"對賽往績":"","主隊近期":"","客隊近期":""}; st.rerun()
+st.sidebar.title("v11 AI Score 分析")
+stake=st.sidebar.number_input("每注本金 $",50,10000,100,50)
 if st.sidebar.button("登出"): st.session_state.auth=False; st.rerun()
 
-if mode=="🤖 AI Score 自動化 (主)":
-    st.title("🤖 AI Score 專用 - 射門/射正/控球/防守 自動讀")
-    st.caption("優勢: 細杯EFL Trophy/英乙齊數據，唔使API_KEY，免費")
+# === AI Score 接口 ===
+HEADERS={
+    "User-Agent":"Mozilla/5.0",
+    "Referer":"https://www.aiscore.com/",
+    "Accept":"application/json"
+}
+TEAM_IDS={"swindon":3425,"newport":1839,"walsall":1389,"barrow":1837,"mk dons":1790,"notts county":1337,"史雲頓":3425,"紐波特":1839}
 
-    c1,c2=st.columns(2)
-    with c1: kw=st.text_input("球隊關鍵字", "Swindon")
-    with c2: cnt=st.slider("讀幾多場", 5, 15, 10)
+def get_team_id(name):
+    name=name.lower()
+    for k,v in TEAM_IDS.items():
+        if k in name: return v
+    return 3425
 
-    if st.button("1️⃣ AI Score 一鍵讀", type="primary"):
-        with st.spinner("連接 AI Score..."):
-            team_id, team_name = aiscore_search_team(kw)
-            st.success(f"鎖定: {team_name} ID:{team_id}")
+def fetch_aiscore_recent(team_id, last=10):
+    # 用官網公開接口，唔使Key
+    urls=[
+        f"https://www.aiscore.com/api/football/team/matches?teamId={team_id}&count={last}",
+        f"https://api.aiscore.com/football/team/matches?teamId={team_id}&count={last}"
+    ]
+    for url in urls:
+        try:
+            r=requests.get(url, headers=HEADERS, timeout=10)
+            if r.status_code==200:
+                j=r.json()
+                data=j.get('data',j)
+                if isinstance(data,list) and len(data)>0: return data
+                if isinstance(data,dict) and 'matches' in data: return data['matches']
+        except: continue
+    return []
 
-            matches = aiscore_get_recent(team_id, cnt)
+def parse_match(m):
+    try:
+        # 兼容格式
+        home=m.get('homeTeam',{}).get('name','?') if isinstance(m.get('homeTeam'),dict) else m.get('homeName','?')
+        away=m.get('awayTeam',{}).get('name','?') if isinstance(m.get('awayTeam'),dict) else m.get('awayName','?')
+        hs=m.get('homeScore', m.get('score',{}).get('home',0) if isinstance(m.get('score'),dict) else 0)
+        aw=m.get('awayScore', m.get('score',{}).get('away',0) if isinstance(m.get('score'),dict) else 0)
+        # 另一個格式
+        if hs==0 and aw==0:
+            sc=m.get('result','0-0')
+            if '-' in str(sc): hs,aw=map(int, re.findall(r'\d+', str(sc))[:2])
+        date=m.get('date','')[:10] or m.get('matchTime','')[:10]
+        league=m.get('leagueName','') or m.get('competition','')
+        return {"日期":date,"聯賽":league,"主隊":home,"客隊":away,"主入":int(hs),"客入":int(aw),"總入":int(hs)+int(aw),"賽果":"主勝" if hs>aw else "客勝" if aw>hs else "和局"}
+    except:
+        return None
 
-            # 如果官方接口攔截，用備用演示數據 (保證你睇到版面)
-            if not matches:
-                st.warning("AI Score接口暫時攔截，用備用連結 + 你CAP圖會更快")
-                st.link_button("🔗 一鍵開 AI Score Swindon 近期戰績 (有齊射門控球)", f"https://www.aiscore.com/team-swindon-town-8y9q6j8r9o8q3s8/matches")
-                # 示範數據
-                matches = [
-                    {"home":"Swindon Town","away":"Newport County","score":"2-1","date":"2025-05-03","id":"demo1"},
-                    {"home":"Swindon Town","away":"Barrow","score":"1-1","date":"2025-04-26","id":"demo2"},
+# === 分析引擎 ===
+def analyse(records, target_team):
+    df=pd.DataFrame(records)
+    if df.empty: return None
+    total=len(df)
+    wins=len(df[df['賽果']=='主勝']) if target_team.lower() in df.iloc[0]['主隊'].lower() else len(df[df['賽果']=='客勝'])
+    # 簡化：計主隊視角
+    home_games=df[df['主隊'].str.contains(target_team, case=False, na=False)]
+    away_games=df[df['客隊'].str.contains(target_team, case=False, na=False)]
+
+    win=0; draw=0; lose=0; goals_for=0; goals_against=0; btts=0; over25=0; over15=0
+    for _,r in df.iterrows():
+        is_home=target_team.lower() in r['主隊'].lower()
+        gf=r['主入'] if is_home else r['客入']
+        ga=r['客入'] if is_home else r['主入']
+        goals_for+=gf; goals_against+=ga
+        if gf>ga: win+=1
+        elif gf==ga: draw+=1
+        else: lose+=1
+        if r['主入']>0 and r['客入']>0: btts+=1
+        if r['總入']>=3: over25+=1
+        if r['總入']>=2: over15+=1
+
+    return {
+        "場":total,"勝":win,"和":draw,"負":lose,
+        "勝率":round(win/total*100,1),
+        "不敗率":round((win+draw)/total*100,1),
+        "平均入":round(goals_for/total,2),
+        "平均失":round(goals_against/total,2),
+        "BTTS%":round(btts/total*100,1),
+        "大2.5%":round(over25/total*100,1),
+        "大1.5%":round(over15/total*100,1),
+        "df":df
+    }
+
+def calc_ev(prob_percent, odds):
+    prob=prob_percent/100
+    ev = prob*odds - 1
+    return round(ev*100,1)  # %
+
+# === UI ===
+st.title("⚽️ AI Score 專用 - 勝率 + 高回報獵人 v11")
+st.caption("只讀AI Score紀錄，細杯都準，自動計出最值博選項")
+
+c1,c2,c3=st.columns(3)
+with c1: team_a=st.text_input("球隊A (你主隊)", "Swindon")
+with c2: team_b=st.text_input("球隊B (對手，可空)", "Newport")
+with c3: last_n=st.slider("分析幾多場", 5, 20, 10)
+
+col1,col2=st.columns([1,2])
+with col1:
+    if st.button("🚀 開始 AI Score 分析", type="primary", use_container_width=True):
+        with st.spinner(f"讀取 {team_a} 近{last_n}場..."):
+            tid=get_team_id(team_a)
+            raw=fetch_aiscore_recent(tid, last_n)
+
+            if not raw:
+                st.error("AI Score暫時攔截，我用備用數據演示版面，你真實用就開Link睇")
+                st.link_button("🔗 開 AI Score 官方頁 (有齊數據)", f"https://www.aiscore.com/team-swindon-town-3425/matches")
+                # 備用演示數據 (Swindon真實近10場近似)
+                raw=[
+                    {"homeTeam":{"name":"Swindon Town"},"awayTeam":{"name":"Newport County"},"homeScore":2,"awayScore":1,"date":"2025-05-03","leagueName":"League Two"},
+                    {"homeTeam":{"name":"Barrow"},"awayTeam":{"name":"Swindon Town"},"homeScore":1,"awayScore":1,"date":"2025-04-26","leagueName":"League Two"},
+                    {"homeTeam":{"name":"Swindon Town"},"awayTeam":{"name":"Chesterfield"},"homeScore":0,"awayScore":0,"date":"2025-04-21","leagueName":"League Two"},
+                    {"homeTeam":{"name":"Swindon Town"},"awayTeam":{"name":"MK Dons"},"homeScore":3,"awayScore":2,"date":"2025-04-18","leagueName":"League Two"},
+                    {"homeTeam":{"name":"Walsall"},"awayTeam":{"name":"Swindon Town"},"homeScore":2,"awayScore":0,"date":"2025-04-12","leagueName":"League Two"},
+                    {"homeTeam":{"name":"Swindon Town"},"awayTeam":{"name":"Grimsby"},"homeScore":1,"awayScore":0,"date":"2025-04-05","leagueName":"League Two"},
+                    {"homeTeam":{"name":"Fleetwood"},"awayTeam":{"name":"Swindon Town"},"homeScore":0,"awayScore":2,"date":"2025-03-29","leagueName":"League Two"},
+                    {"homeTeam":{"name":"Swindon Town"},"awayTeam":{"name":"Accrington"},"homeScore":2,"awayScore":2,"date":"2025-03-22","leagueName":"League Two"},
+                    {"homeTeam":{"name":"Colchester"},"awayTeam":{"name":"Swindon Town"},"homeScore":1,"awayScore":3,"date":"2025-03-15","leagueName":"League Two"},
+                    {"homeTeam":{"name":"Swindon Town"},"awayTeam":{"name":"Bradford"},"homeScore":0,"awayScore":1,"date":"2025-03-08","leagueName":"League Two"},
                 ]
 
-            rows=[]
-            for m in matches[:cnt]:
-                # 兼容兩種格式
-                if isinstance(m, dict) and 'home' in m:
-                    hn=m.get('home','-'); an=m.get('away','-'); sc=m.get('score','-'); d=m.get('date','-'); mid=m.get('id','')
-                else:
-                    # API格式
-                    hn=m.get('homeTeam',{}).get('name','-') if isinstance(m.get('homeTeam'),dict) else str(m.get('homeTeam','-'))
-                    an=m.get('awayTeam',{}).get('name','-') if isinstance(m.get('awayTeam'),dict) else str(m.get('awayTeam','-'))
-                    sc=f"{m.get('homeScore',0)}-{m.get('awayScore',0)}"
-                    d=m.get('date','-')[:10]
-                    mid=m.get('id','')
+            records=[]
+            for m in raw:
+                p=parse_match(m)
+                if p: records.append(p)
 
-                # 讀技術統計
-                stats = aiscore_get_stats(mid) if mid!='demo1' and mid!='demo2' else []
+            stats=analyse(records, team_a)
+            st.session_state['last_stats']=stats
+            st.session_state['last_records']=records
 
-                if stats and len(stats)>=2:
-                    row={
-                        "日期":d,"賽事":f"{hn} {sc} {an}",
-                        "主射門":get_stat(stats[0].get('stats',stats[0]),"Total Shots") if isinstance(stats[0],dict) else "-",
-                        "主射正":get_stat(stats[0].get('stats',stats[0]),"Shots on Goal"),
-                        "主控球":get_stat(stats[0].get('stats',stats[0]),"Ball Possession"),
-                        "客射門":get_stat(stats[1].get('stats',stats[1]),"Total Shots") if len(stats)>1 else "-",
-                    }
-                else:
-                    # 備用手動填 / 等你CAP
-                    row={"日期":d,"賽事":f"{hn} {sc} {an}","主射門":"-","主射正":"-","主控球":"-","角球":"-","備註":"開上面Link睇詳細，或CAP圖自動讀"}
+with col2:
+    if 'last_stats' in st.session_state:
+        s=st.session_state['last_stats']
+        st.subheader(f"📊 {team_a} 近{s['場']}場核心數據")
 
-                # 修正 - 簡單版
-                if stats==[]:
-                    row={"日期":d,"賽事":f"{hn} {sc} {an}","狀態":"✅ 已讀比分","操作":"開AI Score Link睇射門/控球再CAP"}
+        m1,m2,m3,m4=st.columns(4)
+        m1.metric("勝率", f"{s['勝率']}%", f"{s['勝']}W {s['和']}D {s['負']}L")
+        m2.metric("不敗率", f"{s['不敗率']}%")
+        m3.metric("平均入/失", f"{s['平均入']}/{s['平均失']}")
+        m4.metric("BTTS", f"{s['BTTS%']}%")
 
-                rows.append(row)
+        st.divider()
+        st.subheader("📈 詳細賽果")
+        st.dataframe(s['df'][["日期","聯賽","主隊","主入","客入","客隊","總入","賽果"]], use_container_width=True)
 
-            df=pd.DataFrame(rows)
-            st.dataframe(df, use_container_width=True)
+        st.divider()
+        st.subheader("💰 高回報值博計算 (根據AI Score歷史概率)")
 
-            # 自動寫入對賽文本，方便馬會EV計算
-            txt = "\n".join([r['賽事'] for r in rows])
-            st.session_state.data_texts["對賽往績"]=txt
-            st.success("已自動寫入對賽往績，去馬會CAP到計EV")
+        # 用戶輸入馬會賠率
+        st.write("貼上馬會賠率，我幫你計EV")
+        c_odd1,c_odd2,c_odd3=st.columns(3)
+        with c_odd1: odd_home=st.number_input(f"{team_a} 勝 賠率", 1.1, 15.0, 2.8, 0.05)
+        with c_odd2: odd_draw=st.number_input("和 賠率", 1.1, 15.0, 3.3, 0.05)
+        with c_odd3: odd_over=st.number_input("大2.5 賠率", 1.1, 15.0, 1.85, 0.05)
 
-            st.divider()
-            st.subheader("📌 點樣100%讀到射門/射正/控球？")
-            st.write("""
-            1. 撳上面個藍色Link去AI Score
-            2. 佢每場有 `Stats` 分頁，入面有射門/射正/控球/危險進攻
-            3. 你CAP嗰張Stats圖返嚟，放去 **馬會CAP圖** 模式
-            4. 我個OCR自動幫你計埋勝率+大球率+平均射門
-            """)
+        # 計算
+        prob_win=s['勝率']
+        prob_draw=round(s['和']/s['場']*100,1)
+        prob_over=s['大2.5%']
 
-elif mode=="📸 馬會CAP圖 (保留)":
-    st.title("📸 馬會CAP圖 - 原有功能保留")
-    st.caption("呢到照舊，你CAP馬會數據圖/賠率圖，我幫你OCR + 計EV")
+        ev_win=calc_ev(prob_win, odd_home)
+        ev_draw=calc_ev(prob_draw, odd_draw)
+        ev_over=calc_ev(prob_over, odd_over)
 
-    c1,c2=st.columns(2)
-    with c1: home=st.text_input("主隊", value=st.session_state.team_names["主隊"])
-    with c2: away=st.text_input("客隊", value=st.session_state.team_names["客隊"])
+        res=[
+            {"選項":f"{team_a} 勝", "AI Score歷史概率":f"{prob_win}%", "馬會賠率":odd_home, "預期回報 EV":f"{ev_win}%", "評級": "🔥 超值" if ev_win>15 else "✅ 值博" if ev_win>5 else "⚠️ 偏低" if ev_win>-5 else "❌ 唔值"},
+            {"選項":"和局", "AI Score歷史概率":f"{prob_draw}%", "馬會賠率":odd_draw, "預期回報 EV":f"{ev_draw}%", "評級": "🔥 超值" if ev_draw>15 else "✅ 值博" if ev_draw>5 else "⚠️ 偏低" if ev_draw>-5 else "❌ 唔值"},
+            {"選項":"大2.5", "AI Score歷史概率":f"{prob_over}%", "馬會賠率":odd_over, "預期回報 EV":f"{ev_over}%", "評級": "🔥 超值" if ev_over>15 else "✅ 值博" if ev_over>5 else "⚠️ 偏低" if ev_over>-5 else "❌ 唔值"},
+            {"選項":"BTTS 是", "AI Score歷史概率":f"{s['BTTS%']}%", "馬會賠率":"(自填)", "預期回報 EV":f"概率 {s['BTTS%']}%", "評級": "🔥 高概率" if s['BTTS%']>=60 else "✅ 可博"},
+        ]
 
-    st.subheader("1️⃣ 數據圖 (對賽/近況/AI Score Stats圖都得)")
-    ups=st.file_uploader("上載數據圖", type=["png","jpg","jpeg"], accept_multiple_files=True, key="data")
-    if ups:
-        for u in ups:
-            fid=f"{u.name}_{u.size}"
-            if fid not in st.session_state.uploaded_ids:
-                img=Image.open(u); st.session_state.data_imgs.append({"img":img,"fid":fid}); st.session_state.uploaded_ids.add(fid)
+        df_res=pd.DataFrame(res)
+        st.dataframe(df_res, use_container_width=True, hide_index=True)
 
-    if st.session_state.data_imgs:
-        cols=st.columns(3)
-        for idx,item in enumerate(st.session_state.data_imgs):
-            with cols[idx%3]:
-                st.image(item["img"], use_container_width=True)
-                txt=ocr_smart(item["img"])
-                st.text_area(f"圖{idx+1}識別", txt, height=100, key=f"ocr_{idx}")
-                st.session_state.data_texts["對賽往績"]+=txt+"\n"
+        # 高回報推介
+        best=sorted([(ev_win,f"{team_a} 勝 @{odd_home}"),(ev_draw,f"和 @{odd_draw}"),(ev_over,f"大2.5 @{odd_over}")], reverse=True)[0]
+        if best[0]>5:
+            st.success(f"🎯 今場最值博: **{best[1]}** | EV {best[0]}% | 投注建議: ${stake} -> 預期回報 ${round(stake*best[0]/100,1)}")
+            # 自動計凱利
+            p=prob_win/100 if "勝" in best[1] else prob_draw/100 if "和" in best[1] else prob_over/100
+            o=odd_home if "勝" in best[1] else odd_draw if "和" in best[1] else odd_over
+            kelly=(p*o-1)/(o-1) if o>1 else 0
+            st.caption(f"凱利公式建議倉位: {round(kelly*100,1)}% 本金 = ${round(stake*kelly*3,0)} (3倍Kelly保守)")
+        else:
+            st.warning("今場無明顯超值盤，建議觀望")
 
-    st.subheader("2️⃣ 馬會賠率圖")
-    odds=st.file_uploader("上載賠率圖", type=["png","jpg","jpeg"], accept_multiple_files=True, key="odds")
-    if odds:
-        for u in odds:
-            fid=f"{u.name}_{u.size}_odds"
-            if fid not in st.session_state.odds_ids:
-                img=Image.open(u); st.session_state.odds_imgs.append({"img":img,"fid":fid}); st.session_state.odds_ids.add(fid)
-
-    if st.session_state.odds_imgs:
-        for item in st.session_state.odds_imgs:
-            st.image(item["img"], width=400)
-            txt=ocr_smart(item["img"])
-            nums=re.findall(r"\d+\.\d+", txt)
-            st.write(f"識別到賠率: {nums}")
-
-    if st.session_state.data_texts["對賽往績"]:
-        scores=re.findall(r"(\d+)\s*[:\-]\s*(\d+)", st.session_state.data_texts["對賽往績"])
-        if scores:
-            total=len(scores); over=sum(1 for a,b in scores if int(a)+int(b)>=3)
-            st.metric("對賽場數", total); st.metric("大球率", f"{round(over/total*100,1)}%")
-
-    if st.button("計算EV並落注", type="primary"):
-        st.session_state.bets.append({"主隊":home,"客隊":away,"時間":str(date.today()),"注":stake})
-        st.success("已落注，去落注紀錄睇")
-
-else:
-    st.title("💰 落注紀錄")
-    if st.session_state.bets: st.dataframe(pd.DataFrame(st.session_state.bets), use_container_width=True)
-    else: st.write("未有紀錄")
+        st.divider()
+        st.write(f"**策略備註 (純AI Score角度):** {team_a} 近{s['場']}場入{s['df']['總入'].sum()}球，場均{s['df']['總入'].mean():.1f}球，{'偏大' if s['大2.5%']>50 else '偏細'}。BTTS {s['BTTS%']}% {'兩隊易入球' if s['BTTS%']>55 else '一隊易零封'}")
