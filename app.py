@@ -10,7 +10,7 @@ if "auth" not in st.session_state: st.session_state.auth=False
 if not st.session_state.auth:
     st.title("🔒 EdgeLab v8.0 私人版")
     st.caption("此為私人策略工具，需密碼登入")
-    pwd = st.text_input("輸入私人密碼", type="password", key="0503")
+    pwd = st.text_input("輸入私人密碼", type="password", key="pwd80")
     if st.button("登入", key="login80"):
         real_pwd = st.secrets.get("APP_PWD", "1234") # 去Streamlit Secrets設定
         if pwd == real_pwd:
