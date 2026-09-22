@@ -18,148 +18,145 @@ st.title("EdgeLab v6 - CAP圖即時分析")
 
 # ===== 1. CAP圖功能 =====
 st.divider()
-st.subheader("📱 v7.0 馬會投注模擬器 - 全項目識別")
+st.subheader("📊 v7.1 兩步分析 - 數據先，賠率後")
 
 from streamlit_paste_button import paste_image_button
 import pytesseract, re
 from PIL import Image
 
-if "cap_imgs" not in st.session_state: st.session_state.cap_imgs=[]
-if "hkjc_markets" not in st.session_state: st.session_state.hkjc_markets={}
+if "step1_text" not in st.session_state: st.session_state.step1_text=""
+if "step2_odds" not in st.session_state: st.session_state.step2_odds=[]
+if "analysis_result" not in st.session_state: st.session_state.analysis_result={}
 
-# 上傳
-c1,c2,c3 = st.columns([2,2,1])
+# ========== 第一步：放馬會數據 (過往賽果、對賽) ==========
+st.markdown("### 第1步：放馬會數據頁 (過往賽果/對賽)")
+st.caption("呢頁得比數 2:1, 1:0 嗰啲，無賠率，系統淨係會計數據")
+
+c1,c2 = st.columns([3,1])
 with c1:
-    ups = st.file_uploader("上傳馬會賠率版 (全版)", type=["png","jpg"], accept_multiple_files=True, key="up70")
-    if ups:
-        for u in ups: st.session_state.cap_imgs.append(Image.open(u))
+    up1 = st.file_uploader("上傳數據圖", type=["png","jpg"], key="up71_data", accept_multiple_files=True)
+    paste1 = paste_image_button("📋 Ctrl+V 貼數據圖", key="paste71_data")
 with c2:
-    paste = paste_image_button("📋 Ctrl+V 貼馬會版面", key="paste70")
-    if paste and paste.image_data is not None:
-        st.session_state.cap_imgs.append(paste.image_data)
-with c3:
-    if st.button("清空"): 
-        st.session_state.cap_imgs=[]
-        st.session_state.hkjc_markets={}
+    if st.button("清數據"):
+        st.session_state.step1_text=""
         st.rerun()
 
-# 核心：馬會關鍵字字典
-MARKET_KEYS = {
-    "主客和": ["主客和","HAD","主 客 和"],
-    "讓球主客和": ["讓球主客和","讓球主客","HDC HAD"],
-    "讓球": ["讓球$","讓球 ","讓  球","亞洲讓球","HDC"],
-    "半場主客和": ["半場主客和","半場","Half Time HAD","半場主客"],
-    "波膽": ["波膽","Correct Score","正確比數","波 膽"],
-    "入球大細": ["入球大細","大細","入球 大細","大/細","O/U","入球數"],
-    "半全場": ["半全場","Half Time Full Time"],
-    "角球大細": ["角球","角 球"],
-}
+step1_imgs=[]
+if up1:
+    for u in up1: step1_imgs.append(Image.open(u))
+if paste1 and paste1.image_data is not None:
+    step1_imgs.append(paste1.image_data)
 
-def parse_hkjc_full(text, img_odds):
-    markets={}
-    lines=text.split("\n")
-    for m_name, keys in MARKET_KEYS.items():
-        for line in lines:
-            for k in keys:
-                if k.lower() in line.lower():
-                    # 捉呢行附近嘅賠率
-                    odds = re.findall(r"\d+\.\d{1,2}", line)
-                    # 如果呢行無賠率，捉下面一行
-                    if not odds: 
-                        continue
-                    # 過濾
-                    valid=[o for o in odds if 1.01<=float(o)<=40.0]
-                    if valid:
-                        if m_name not in markets: markets[m_name]=[]
-                        markets[m_name].extend(valid)
-                    break
-    # 波膽特殊處理：捉 比數+賠率
-    score_pattern = re.findall(r"(\d+:\d+|\d+-\d+)\s*(\d+\.\d+)", text)
-    if score_pattern:
-        markets["波膽"] = [f"{s} @ {o}" for s,o in score_pattern[:16]]
+step1_full_text=""
+for im in step1_imgs:
+    st.image(im, caption="數據圖", width=350)
+    try:
+        txt = pytesseract.image_to_string(im, lang="chi_tra+eng")
+        step1_full_text+=txt+"\n"
+    except: pass
 
-    # 如果分唔到，就全部當主客和
-    if not markets and img_odds:
-        markets["主客和"] = img_odds
-    return markets
+# 手動可改數據
+st.session_state.step1_text = st.text_area("數據OCR結果 (可手改，淨係會有比數)", st.session_state.step1_text+"\n"+step1_full_text, height=120, key="ta1")
 
-if st.session_state.cap_imgs:
-    last_im = st.session_state.cap_imgs[-1]
-    st.image(last_im, use_container_width=True, caption="馬會原圖")
+# 自動分析數據
+if st.session_state.step1_text:
+    # 捉波膽比數 2-1, 1:0 呢啲
+    scores = re.findall(r"(\d+)\s*[:\-]\s*(\d+)", st.session_state.step1_text)
+    # 捉主客勝負文字
+    win_h = len(re.findall(r"主勝|主隊勝|H.*W|勝\(主\)", st.session_state.step1_text))
+    win_a = len(re.findall(r"客勝|客隊勝|A.*W|勝\(客\)", st.session_state.step1_text))
 
-    # OCR成頁
-    full_text = pytesseract.image_to_string(last_im, lang="chi_tra+eng")
-    all_odds = re.findall(r"\d+\.\d{1,2}", full_text)
-    all_odds = [o for o in all_odds if 1.01<=float(o)<=40.0]
-    uniq_odds=[]
-    for o in all_odds:
-        if o not in uniq_odds: uniq_odds.append(o)
+    # 簡單計命中率
+    total_games = len(scores) if scores else (win_h+win_a+1)
+    over25 = 0
+    for s in scores:
+        try:
+            if int(s[0])+int(s[1]) > 2.5: over25+=1
+        except: pass
 
-    markets = parse_hkjc_full(full_text, uniq_odds)
-    st.session_state.hkjc_markets = markets
+    st.session_state.analysis_result = {
+        "total": total_games,
+        "主勝率": round(win_h/total_games*100,1) if total_games else 50,
+        "客勝率": round(win_a/total_games*100,1) if total_games else 30,
+        "大球率": round(over25/len(scores)*100,1) if scores else 50,
+        "常見波膽": scores[:5]
+    }
+    st.info(f"📈 數據分析：共{total_games}場 | 主勝 {st.session_state.analysis_result['主勝率']}% | 客勝 {st.session_state.analysis_result['客勝率']}% | 大2.5 {st.session_state.analysis_result['大球率']}% | 常見 {scores[:3]}")
 
-    if markets:
-        st.success(f"已識別到 {len(markets)} 個馬會項目: {list(markets.keys())}")
-        
-        # 馬會式Tabs
-        tabs = st.tabs(list(markets.keys()))
-        selected_bets=[]
+# ========== 第二步：放馬會賠率頁 (波膽/主客和) ==========
+st.divider()
+st.markdown("### 第2步：再放馬會賠率頁 (呢頁先有賠率)")
+st.caption("呢度先開始認賠率，因為第一步已鎖定命中率，唔會再同比數撈亂")
 
-        for idx, m_name in enumerate(markets.keys()):
-            with tabs[idx]:
-                st.write(f"**{m_name}** - 馬會賠率")
-                items = markets[m_name]
-                cols = st.columns(3)
-                for i, item in enumerate(items[:12]): # 最多顯示12個盤
-                    # 解析賠率
-                    odd_match = re.search(r"(\d+\.\d+)", str(item))
-                    odd = float(odd_match.group(1)) if odd_match else 1.90
-                    
-                    label = item if "@" in str(item) or ":" in str(item) else f"{m_name} {item}"
-                    if cols[i%3].button(f"{label}", key=f"bet_{m_name}_{i}"):
-                        selected_bets.append((m_name, label, odd))
-                        st.toast(f"已加入投注單: {label} @ {odd}")
+c1,c2 = st.columns([3,1])
+with c1:
+    up2 = st.file_uploader("上傳賠率圖", type=["png","jpg"], key="up71_odds", accept_multiple_files=True)
+    paste2 = paste_image_button("📋 Ctrl+V 貼賠率圖", key="paste71_odds")
+with c2:
+    if st.button("清賠率"):
+        st.session_state.step2_odds=[]
+        st.rerun()
 
-                # 手動加盤
-                with st.expander(f"手動加 {m_name} 盤"):
-                    custom_label = st.text_input(f"{m_name} 名", f"{m_name} 自定", key=f"cl_{m_name}")
-                    custom_odd = st.number_input(f"{m_name} 賠率", 1.01, 50.0, 2.0, key=f"co_{m_name}")
-                    if st.button(f"加入 {m_name}", key=f"cb_{m_name}"):
-                        selected_bets.append((m_name, custom_label, custom_odd))
+step2_imgs=[]
+if up2:
+    for u in up2: step2_imgs.append(Image.open(u))
+if paste2 and paste2.image_data is not None:
+    step2_imgs.append(paste2.image_data)
 
-        # 投注單 - 模擬馬會APP底欄
-        if "slip" not in st.session_state: st.session_state.slip=[]
-        if selected_bets:
-            st.session_state.slip.extend(selected_bets)
-        
-        if st.session_state.slip:
-            st.divider()
-            st.subheader(f"🧾 投注單 ({len(st.session_state.slip)}) - 模擬馬會")
-            total_stake=0
-            for i, (mtype, label, odd) in enumerate(st.session_state.slip):
-                c1,c2,c3,c4 = st.columns([3,2,2,1])
-                c1.write(f"{mtype}: {label}")
-                c2.write(f"@ {odd}")
-                stake = c3.number_input(f"注", 10, 10000, 100, key=f"stake_{i}")
-                total_stake+=stake
-                c4.button("X", key=f"del_{i}", on_click=lambda i=i: st.session_state.slip.pop(i))
-                # 計最高命中+回報
-                pr = st.slider(f"{label} 命中% (睇你貼嘅數據)", 10, 90, 50, key=f"pr_{i}")
-                ev = pr/100*odd-1
-                score = pr*0.6 + ev*100*0.4
-                st.caption(f"EV {ev*100:+.1f}% | 綜合分 {score:.1f} {'✅ 推薦' if score>50 else ''}")
+odds_text=""
+for im in step2_imgs:
+    st.image(im, caption="賠率圖", width=350)
+    try:
+        txt = pytesseract.image_to_string(im, lang="chi_tra+eng")
+        odds_text+=txt+"\n"
+    except: pass
 
-            if st.button(f"全部入模擬倉 測試ROI ${total_stake}", type="primary"):
-                for mtype, label, odd in st.session_state.slip:
-                    st.session_state.bets.append({
-                        "賽事": match_name if 'match_name' in locals() else "馬會分析",
-                        "項目": f"{mtype} {label}",
-                        "賠率": odd,
-                        "投注額": 100,
-                        "回報額": round(100*odd,2),
-                    })
-                st.session_state.slip=[]
+# 只喺賠率頁抽賠率
+if odds_text:
+    # 波膽賠率： 1:0 8.5
+    bodan = re.findall(r"(\d+\s*[:\-]\s*\d+)\s+(\d+\.\d{1,2})", odds_text)
+    # 普通賠率
+    simple_odds = re.findall(r"\d+\.\d{1,2}", odds_text)
+    simple_odds = [o for o in simple_odds if 1.01<=float(o)<=50.0]
+
+    st.success(f"賠率頁認到 {len(simple_odds)} 個賠率，波膽 {len(bodan)} 個")
+
+    # 列表
+    if bodan:
+        st.write("**波膽市場 (已按你第1步數據計推薦)**")
+        cols=st.columns(3)
+        best_pick=None
+        best_score=-1
+        for i, (score, odd) in enumerate(bodan[:12]):
+            # 用第1步嘅數據計呢個波膽有幾大機會出現
+            clean_score = score.replace(" ","")
+            # 如果呢個波膽喺過往賽果出現過，加分
+            freq = st.session_state.step1_text.count(clean_score[0]) if clean_score else 0
+            est_prob = 10 + freq*5 + (st.session_state.analysis_result.get("主勝率",50)/10 if "1:0" in score or "2:1" in score else 0)
+            est_prob = min(70, est_prob)
+            ev = est_prob/100*float(odd)-1
+            final_score = est_prob*0.6 + ev*100*0.4
+
+            if final_score > best_score:
+                best_score=final_score
+                best_pick=(score, odd, est_prob, ev, final_score)
+
+            with cols[i%3]:
+                st.button(f"{score} @ {odd}\n命中~{est_prob:.0f}% EV {ev*100:+.0f}% 分{final_score:.0f}", key=f"bd_{i}")
+
+        if best_pick:
+            st.metric("🏆 數據+賠率綜合推薦", f"{best_pick[0]} @ {best_pick[1]}", f"命中{best_pick[2]:.0f}% EV+{best_pick[3]*100:.1f}% 得分{best_pick[4]:.1f}")
+            if st.button(f"入模擬倉 ${stake_input}"):
+                st.session_state.bets.append({
+                    "賽事":"波膽分析",
+                    "項目":f"波膽 {best_pick[0]}",
+                    "賠率":float(best_pick[1]),
+                    "投注額":stake_input,
+                    "回報額":round(stake_input*float(best_pick[1]),2),
+                    "來源":"數據+賠率兩步"
+                })
                 st.rerun()
-    else:
-        st.error("未識別到馬會項目，試下Cap清楚啲，或用下面手動揀")
-        st.text_area("OCR原文", full_text, height=150)
+
+    # 其他市場都一樣處理
+    with st.expander("睇埋其他市場 主客和/讓球"):
+        st.write(simple_odds[:15])
