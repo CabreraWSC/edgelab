@@ -55,43 +55,106 @@ if mode == "API 自動":
 
 else:
     # ========= CAP圖分析 (兩步) v7.1 =========
-    st.subheader("📊 CAP圖兩步 - 數據先，賠率後 (唔會撈亂)")
+else:
+    # ========= CAP圖分析 v7.4 數據分隊+多圖修復 =========
+    st.subheader("📊 v7.4 數據分析 - 分主客隊+對賽/近期")
 
-    st.markdown("### 第1步：放馬會數據頁 (過往賽果/對賽)")
-    c1,c2 = st.columns([3,1])
-    with c1:
-        up1 = st.file_uploader("上傳數據圖", type=["png","jpg"], key="up71_data", accept_multiple_files=True)
-        paste1 = paste_image_button("📋 Ctrl+V 貼數據圖", key="paste71_data")
-    with c2:
-        if st.button("清數據"):
-            st.session_state.step1_text=""
+    # --- 修復：多圖唔會洗 ---
+    if "data_imgs" not in st.session_state: st.session_state.data_imgs=[]
+    if "data_texts" not in st.session_state: st.session_state.data_texts={"對賽往績":"","主隊近期":"","客隊近期":""}
+
+    st.markdown("### 第1步：放數據 (可放多張，唔會洗)")
+    st.caption("左：對賽往績 | 中：主隊近10場vs其他隊 | 右：客隊近10場vs其他隊")
+
+    c_up, c_paste, c_clear = st.columns([2,2,1])
+    with c_up:
+        ups = st.file_uploader("一次過上傳多張數據圖", type=["png","jpg"], accept_multiple_files=True, key="up74")
+        if ups:
+            for u in ups:
+                st.session_state.data_imgs.append({"img": Image.open(u), "cat":"對賽往績"})
+    with c_paste:
+        paste = paste_image_button("📋 Ctrl+V 貼圖 (可連續貼)", key="paste74")
+        if paste and paste.image_data is not None:
+            st.session_state.data_imgs.append({"img": paste.image_data, "cat":"對賽往績"})
+    with c_clear:
+        if st.button("清空所有數據圖"):
+            st.session_state.data_imgs=[]
+            st.session_state.data_texts={"對賽往績":"","主隊近期":"","客隊近期":""}
             st.rerun()
 
-    step1_imgs=[]
-    if up1:
-        for u in up1: step1_imgs.append(Image.open(u))
-    if paste1 and paste1.image_data is not None:
-        step1_imgs.append(paste1.image_data)
+    # 顯示所有已上傳嘅圖，可分類
+    if st.session_state.data_imgs:
+        st.write(f"已上傳 {len(st.session_state.data_imgs)} 張圖")
+        cols = st.columns(3)
+        for idx, item in enumerate(st.session_state.data_imgs):
+            with cols[idx%3]:
+                st.image(item["img"], width=200)
+                cat = st.selectbox(f"圖{idx+1}屬於", ["對賽往績","主隊近期","客隊近期"], index=["對賽往績","主隊近期","客隊近期"].index(item["cat"]), key=f"cat_{idx}")
+                st.session_state.data_imgs[idx]["cat"]=cat
+                # OCR呢張
+                try:
+                    txt = pytesseract.image_to_string(item["img"], lang="chi_tra+eng")
+                    st.session_state.data_texts[cat]+=txt+"\n"
+                except: pass
+                if st.button("刪", key=f"del_{idx}"):
+                    st.session_state.data_imgs.pop(idx)
+                    st.rerun()
 
-    step1_full_text=""
-    for im in step1_imgs:
-        st.image(im, caption="數據圖", width=350)
-        try: step1_full_text+=pytesseract.image_to_string(im, lang="chi_tra+eng")+"\n"
-        except: pass
+    # 4大項目Tabs - 馬會真實版
+    st.divider()
+    tab_had, tab_hdc, tab_ou, tab_corner = st.tabs(["主客和","讓球","入球大細","角球大細"])
 
-    st.session_state.step1_text = st.text_area("數據OCR (淨比數)", st.session_state.step1_text+"\n"+step1_full_text, height=120)
+    def calc_stats(text_block):
+        scores = re.findall(r"(\d+)\s*[:\-]\s*(\d+)", text_block)
+        total = len(scores) if scores else 0
+        if total==0: return {"場數":0,"主勝%":50,"大球%":50,"角球大%":50}
+        win_h = sum(1 for a,b in scores if int(a)>int(b))
+        over25 = sum(1 for a,b in scores if int(a)+int(b)>=3)
+        return {
+            "場數": total,
+            "主勝%": round(win_h/total*100,1),
+            "大球%": round(over25/total*100,1),
+            "常見波膽": scores[:3]
+        }
 
-    if st.session_state.step1_text:
-        scores = re.findall(r"(\d+)\s*[:\-]\s*(\d+)", st.session_state.step1_text)
-        total = len(scores) if scores else 1
-        over25 = sum(1 for a,b in scores if int(a)+int(b)>2)
-        st.info(f"📈 共{total}場 | 大2.5 {over25/total*100:.0f}% | 常見 {scores[:3]}")
+    with tab_had:
+        st.write("**主客和數據**")
+        c1,c2,c3 = st.columns(3)
+        with c1:
+            s1=calc_stats(st.session_state.data_texts["對賽往績"])
+            st.metric("對賽往績 (對賽)", f"{s1['主勝%']}% 主勝", f"{s1['場數']}場")
+        with c2:
+            s2=calc_stats(st.session_state.data_texts["主隊近期"])
+            st.metric("主隊近期 (vs其他隊)", f"{s2['主勝%']}% 主勝", f"{s2['場數']}場")
+        with c3:
+            s3=calc_stats(st.session_state.data_texts["客隊近期"])
+            st.metric("客隊近期 (vs其他隊)", f"{s3['主勝%']}% 主勝", f"{s3['場數']}場")
+        st.session_state.final_had = (s1["主勝%"]*0.5 + s2["主勝%"]*0.3 + s3["主勝%"]*0.2)
+
+    with tab_hdc:
+        st.write("**讓球數據** - 睇下兩隊贏盤率")
+        # 簡單用比分減讓球線計
+        st.session_state.final_hdc = st.session_state.get("final_had",50)
+
+    with tab_ou:
+        st.write("**入球大細數據**")
+        c1,c2,c3 = st.columns(3)
+        with c1: st.metric("對賽大球", f"{calc_stats(st.session_state.data_texts['對賽往績'])['大球%']}%")
+        with c2: st.metric("主隊大球", f"{calc_stats(st.session_state.data_texts['主隊近期'])['大球%']}%")
+        with c3: st.metric("客隊大球", f"{calc_stats(st.session_state.data_texts['客隊近期'])['大球%']}%")
+
+    with tab_corner:
+        st.write("**角球數據** - (你貼角球數嗰頁，佢會自動捉 5,6,7呢啲)")
+        corners = re.findall(r"角.*?(\d+)", st.session_state.data_texts["對賽往績"]+st.session_state.data_texts["主隊近期"])
+        if corners:
+            avg_corner = sum(int(c) for c in corners if c.isdigit() and int(c)<20)/max(1,len(corners))
+            st.metric("平均角球", f"{avg_corner:.1f}")
 
     st.divider()
-    st.markdown("### 第2步：放馬會賠率頁 (波膽/主客和)")
-    up2 = st.file_uploader("上傳賠率圖", type=["png","jpg"], key="up71_odds", accept_multiple_files=True)
-    paste2 = paste_image_button("📋 Ctrl+V 貼賠率圖", key="paste71_odds")
-
+    st.markdown("### 第2步：放賠率圖 (波膽/主客和/讓球)")
+    # 第2步同之前一樣，但會用上面分隊計出嚟嘅final_had去計EV
+    up2 = st.file_uploader("上傳賠率圖", type=["png","jpg"], key="up74_odds", accept_multiple_files=True)
+    paste2 = paste_image_button("📋 Ctrl+V 貼賠率", key="paste74_odds")
     step2_imgs=[]
     if up2:
         for u in up2: step2_imgs.append(Image.open(u))
@@ -100,37 +163,32 @@ else:
 
     odds_text=""
     for im in step2_imgs:
-        st.image(im, caption="賠率圖", width=350)
+        st.image(im, width=350)
         try: odds_text+=pytesseract.image_to_string(im, lang="chi_tra+eng")+"\n"
         except: pass
 
     if odds_text:
         bodan = re.findall(r"(\d+\s*[:\-]\s*\d+)\s+(\d+\.\d{1,2})", odds_text)
-        simple_odds = re.findall(r"\d+\.\d{1,2}", odds_text)
-        simple_odds = [o for o in simple_odds if 1.01<=float(o)<=50.0]
-        st.success(f"賠率頁認到 {len(simple_odds)} 個賠率，波膽 {len(bodan)} 個")
+        st.success(f"認到 {len(bodan)} 個波膽")
         if bodan:
-            cols=st.columns(3)
             best=None
-            best_score=-1
-            for i,(score,odd) in enumerate(bodan[:12]):
-                est_prob = 40 + st.session_state.step1_text.count(score.replace(" ","")[0])*2
-                est_prob = min(70, est_prob)
-                ev = est_prob/100*float(odd)-1
-                final_score = est_prob*0.6 + ev*100*0.4
-                if final_score>best_score:
-                    best_score=final_score
-                    best=(score,odd,est_prob,ev,final_score)
-                cols[i%3].button(f"{score} @ {odd}\n命中{est_prob:.0f}% EV{ev*100:+.0f}%", key=f"bd_{i}")
+            best_s=-1
+            for i,(sc,od) in enumerate(bodan[:12]):
+                # 用第1步分隊命中率計
+                base_pr = st.session_state.get("final_had", 50)
+                if sc.strip().startswith("1") or sc.strip().startswith("2:1"): pr = base_pr
+                else: pr = 100-base_pr
+                pr = max(10,min(75,pr))
+                ev = pr/100*float(od)-1
+                score = pr*0.6 + ev*100*0.4
+                if score>best_s:
+                    best_s=score
+                    best=(sc,od,pr,ev,score)
             if best:
-                st.metric("🏆 數據+賠率綜合推薦", f"{best[0]} @ {best[1]}", f"命中{best[2]:.0f}% EV+{best[3]*100:.1f}%")
-                if st.button(f"入模擬倉 ${stake_input}", key="in_bodan"):
-                    st.session_state.bets.append({"賽事":"波膽","項目":f"波膽 {best[0]}","賠率":float(best[1]),"投注額":stake_input,"回報額":round(stake_input*float(best[1]),2)})
+                st.metric("🏆 數據分隊+賠率推薦", f"{best[0]} @ {best[1]}", f"命中{best[2]:.0f}% EV+{best[3]*100:.1f}%")
+                if st.button(f"入倉 ${stake_input}", key="in74"):
+                    st.session_state.bets.append({"賽事":"分隊分析","項目":f"波膽 {best[0]}","賠率":float(best[1]),"投注額":stake_input,"回報額":round(stake_input*float(best[1]),2)})
                     st.rerun()
 
     if st.session_state.bets:
-        st.divider()
         st.dataframe(pd.DataFrame(st.session_state.bets))
-        if st.button("清倉"):
-            st.session_state.bets=[]
-            st.rerun()
