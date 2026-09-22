@@ -18,41 +18,50 @@ st.title("EdgeLab v6 - CAP圖即時分析")
 
 # ===== 1. CAP圖功能 =====
 st.divider()
-st.subheader("📸 CAP圖分析 v6.2 自動讀字")
+st.subheader("📸 CAP圖分析 v6.3 Ctrl+V貼圖")
 
+from streamlit_paste_button import paste_image_button
 import pytesseract, re
-ups = st.file_uploader("上傳馬會CAP圖", type=["png","jpg"], accept_multiple_files=True, key="cap62")
+
+st.info("電腦用 Snipping Tool / 微信截圖後，直接Ctrl+V")
+
+# 支援2種：上傳 + Ctrl+V貼上
+c1, c2 = st.columns(2)
+with c1:
+    ups = st.file_uploader("或選檔上傳", type=["png","jpg"], accept_multiple_files=True, key="up63")
+with c2:
+    paste = paste_image_button("📋 撳呢度再 Ctrl+V 貼圖", key="paste63")
+
+imgs = []
+if ups: imgs += [Image.open(u) for u in ups]
+if paste and paste.image_data is not None:
+    st.success("已貼上！")
+    imgs.append(paste.image_data)
 
 read_text = ""
-if ups:
-    for u in ups:
-        img = Image.open(u)
-        st.image(img, width=350)
+if imgs:
+    for im in imgs:
+        st.image(im, width=380)
         try:
-            # 中文+英文一起讀
-            txt = pytesseract.image_to_string(img, lang="chi_tra+eng")
-            read_text += txt + "\n"
-        except Exception as e:
-            st.warning(f"OCR引擎未裝好: {e}")
+            read_text += pytesseract.image_to_string(im, lang="chi_tra+eng") + "\n"
+        except: pass
 
 if read_text:
-    st.text_area("OCR讀到嘅文字 (你核對)", read_text, height=150)
-    # 自動抽賠率 例如 1.95 2.10
-    odds_found = re.findall(r"\d\.\d{1,2}", read_text)
-    st.write("自動搵到賠率:", odds_found[:5] if odds_found else "搵唔到，你手打")
+    st.text_area("讀到文字", read_text, height=120)
+    odds = re.findall(r"\d\.\d{1,2}", read_text)
+    st.write("搵到賠率:", odds[:5])
 
-with st.form("cap62_form"):
-    h = st.text_input("主隊", "神戶")
-    a = st.text_input("客隊", "鹿島")
-    c1,c2 = st.columns(2)
-    o1 = c1.number_input("賠率1 (可由OCR貼上)", 1.1, 5.0, float(odds_found[0]) if 'odds_found' in locals() and len(odds_found)>0 else 1.95)
-    pr1 = c1.slider("命中%1", 30, 80, 60)
-    o2 = c2.number_input("賠率2", 1.1, 5.0, float(odds_found[1]) if 'odds_found' in locals() and len(odds_found)>1 else 1.90)
-    pr2 = c2.slider("命中%2", 30, 80, 55)
+# 下面分析form同之前一樣
+with st.form("f63"):
+    h = st.text_input("主隊","神戶")
+    a = st.text_input("客隊","鹿島")
+    o1 = st.number_input("賠率1",1.1,5.0,float(odds[0]) if 'odds' in locals() and odds else 1.95)
+    pr1 = st.slider("命中1%",30,80,60)
+    o2 = st.number_input("賠率2",1.1,5.0,float(odds[1]) if 'odds' in locals() and len(odds)>1 else 1.9)
+    pr2 = st.slider("命中2%",30,80,55)
     go = st.form_submit_button("計最高命中+高回報", type="primary")
 
 if go:
-    m1_ev = pr1/100*o1-1
-    m2_ev = pr2/100*o2-1
-    best = (f"{h} 項目1", o1, m1_ev, pr1) if pr1/100*0.6+m1_ev*0.4 > pr2/100*0.6+m2_ev*0.4 else (f"大細/項目2", o2, m2_ev, pr2)
-    st.success(f"推薦: {best[0]} @ {best[1]} 命中{best[3]}% EV+{best[2]*100:.1f}%")
+    ev1, ev2 = pr1/100*o1-1, pr2/100*o2-1
+    best = ("項目1",o1,ev1,pr1) if pr1*0.6+ev1*40 > pr2*0.6+ev2*40 else ("項目2",o2,ev2,pr2)
+    st.success(f"推薦: {best[0]} @ {best[1]} EV+{best[2]*100:.1f}% 命中{best[3]}%")
