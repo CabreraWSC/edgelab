@@ -1,7 +1,7 @@
 import streamlit as st, requests, re, pandas as pd
 from collections import Counter
 
-st.set_page_config(page_title="EdgeLab v14.3 完整波膽格仔", layout="wide")
+st.set_page_config(page_title="EdgeLab v14.3.1 修復", layout="wide")
 APP_PWD = st.secrets.get("APP_PWD","1234")
 if "auth" not in st.session_state: st.session_state.auth=False
 if not st.session_state.auth:
@@ -10,7 +10,7 @@ if not st.session_state.auth:
     st.stop()
 
 HEADERS={"User-Agent":"Mozilla/5.0"}
-COMMON=[(3425,"Swindon Town"),(3559,"Newport County"),(21138,"Man City"),(21134,"Arsenal"),(21139,"Man Utd")]
+COMMON=[(3425,"Swindon Town"),(3559,"Newport County"),(21138,"Man City"),(21134,"Arsenal")]
 
 def search_teams(kw):
     if not kw or len(kw.strip())<2: return []
@@ -87,7 +87,7 @@ for k in ['recA','recH','statsA','statsH','selA','selB','candsA','candsB']:
     if k not in st.session_state: st.session_state[k]=[] if 'rec' in k or 'cands' in k else None
 if 'odds' not in st.session_state: st.session_state.odds={}
 
-st.title("v14.3 完整版 - 雙往績 + 馬會波膽格仔")
+st.title("v14.3.1 完整版 - 修復ValueError")
 
 c1,c2=st.columns(2)
 with c1:
@@ -112,13 +112,13 @@ teamA_id=st.session_state.selA['id']; teamB_id=st.session_state.selB['id']
 colA,colB=st.columns(2)
 with colA:
     n=st.slider("捉幾多場",5,20,10, key="n_slider")
-    if st.button(f"🔍 捉 {teamA_name} 對其他隊近{n}場", type="primary", use_container_width=True, key="btnA2"):
+    if st.button(f"捉 {teamA_name} 對其他隊近{n}場", type="primary", use_container_width=True, key="btnA2"):
         raw=fetch_recent(teamA_id,n)
         if raw:
             rec=[parse(x) for x in raw if parse(x)]
             st.session_state.recA=rec; st.session_state.statsA=analyse(rec, teamA_name)
 with colB:
-    if st.button(f"🔍 捉 {teamA_name} vs {teamB_name} 對賽", use_container_width=True, key="btnH2"):
+    if st.button(f"捉 {teamA_name} vs {teamB_name} 對賽", use_container_width=True, key="btnH2"):
         raw=fetch_h2h(teamA_id,teamB_id,12)
         if raw:
             rec=[parse(x) for x in raw if parse(x)]
@@ -126,7 +126,7 @@ with colB:
 
 sA=st.session_state.get('statsA'); sH=st.session_state.get('statsH')
 if not sA and not sH:
-    st.warning("要捉主隊對其他隊 同 對賽，兩份往績先夠支撐"); st.stop()
+    st.warning("要捉主隊對其他隊 同 對賽"); st.stop()
 
 def g(d,k): return d.get(k,0) if d else 0
 def weighted(a,b, wa=0.6, wb=0.4): return a*wa + b*wb if b and b>0 else a
@@ -136,11 +136,14 @@ win_H=g(sH,'勝率') if sH else 0; draw_H=g(sH,'和率') if sH else 0; lose_H=g(
 win_data=weighted(win_A, win_H); draw_data=weighted(draw_A, draw_H); lose_data=weighted(lose_A, lose_H)
 tot=win_data+draw_data+lose_data
 if tot>0: win_data,draw_data,lose_data=win_data/tot*100,draw_data/tot*100,lose_data/tot*100
+else: win_data,draw_data,lose_data=33.3,33.3,33.3
+
 ht_win=weighted(g(sA,'半勝率'), g(sH,'半勝率')); ht_draw=weighted(g(sA,'半和率'), g(sH,'半和率')); ht_lose=weighted(g(sA,'半負率'), g(sH,'半負率'))
 ht_tot=ht_win+ht_draw+ht_lose
 if ht_tot>0: ht_win,ht_draw,ht_lose=ht_win/ht_tot*100,ht_draw/ht_tot*100,ht_lose/ht_tot*100
+else: ht_win,ht_draw,ht_lose=30,40,30
 
-# === 往績主客和數據 ===
+# 往績主客和
 st.divider()
 st.subheader("📊 往績主客和數據")
 c1,c2=st.columns(2)
@@ -161,16 +164,17 @@ with c2:
         ]))
     else: st.info("②未有對賽")
 
-st.info(f"→ 加權後 主勝{win_data:.1f}% 和{draw_data:.1f}% 客勝{lose_data:.1f}% | 半場 主{ht_win:.1f}% 和{ht_draw:.1f}% 客{ht_lose:.1f}% | 場均總入{g(sA,'總入'):.1f if sA else 0:.1f} 大2.5 {g(sA,'大2.5%'):.0f}%")
+# 修復呢行 - 唔可以喺f-string入面做if else format
+avg_goals = g(sA,'總入') if sA else 0
+avg_o25 = g(sA,'大2.5%') if sA else 0
+st.info(f"→ 加權後 主勝{win_data:.1f}% 和{draw_data:.1f}% 客勝{lose_data:.1f}% | 半場 主{ht_win:.1f}% 和{ht_draw:.1f}% 客{ht_lose:.1f}% | 場均總入{avg_goals:.1f} 大2.5 {avg_o25:.0f}%")
 
-# === 賠率手入 ===
 st.divider()
 st.subheader("💰 賠率手入")
 
 def num_input(key):
     return st.number_input("賠率", min_value=0.0, max_value=100.0, value=float(st.session_state.odds.get(key,0.0)), step=0.05, format="%.2f", key=key, label_visibility="collapsed")
 
-# 全場主客和 - 左中右
 st.write("**全場主客和**")
 c1,c2,c3=st.columns(3)
 with c1:
@@ -189,7 +193,6 @@ with c3:
     st.session_state.odds[f"hhad_a_{teamB_name}"]=o_a
     if o_a>0: st.caption(f"命中{lose_data:.1f}% EV {(lose_data/100*o_a-1)*100:.1f}%")
 
-# 半場主客和
 st.write("**半場主客和**")
 c1,c2,c3=st.columns(3)
 with c1:
@@ -208,7 +211,6 @@ with c3:
     st.session_state.odds[f"hh_a_{teamB_name}"]=o_ha
     if o_ha>0: st.caption(f"命中{ht_lose:.1f}% EV {(ht_lose/100*o_ha-1)*100:.1f}%")
 
-# 入球大細 - 可手入盤口
 st.write("**入球大細 - 盤口可手入**")
 df_ou=pd.DataFrame([
     {"盤口":"大2.5","過往":f"{g(sA,'大2.5%'):.1f}%" if sA else "0%","命中值":g(sA,'大2.5%') if sA else 0,"賠率":st.session_state.odds.get("ou_大2.5",0.0)},
@@ -217,7 +219,7 @@ df_ou=pd.DataFrame([
 ])
 edited_ou=st.data_editor(df_ou, use_container_width=True, hide_index=True, num_rows="dynamic",
     column_config={
-        "盤口": st.column_config.TextColumn("盤口(可改名 例:大3.5)"),
+        "盤口": st.column_config.TextColumn("盤口(可改名)"),
         "過往": st.column_config.TextColumn(disabled=True),
         "命中值": st.column_config.NumberColumn(disabled=True),
         "賠率": st.column_config.NumberColumn("馬會賠率(留空或直接打)", min_value=0.0, max_value=100.0, step=0.05, format="%.2f"),
@@ -225,17 +227,14 @@ edited_ou=st.data_editor(df_ou, use_container_width=True, hide_index=True, num_r
 for _,r in edited_ou.iterrows():
     st.session_state.odds[f"ou_{r['盤口']}"]=float(r["賠率"])
 
-# 波膽格仔 - 馬會式
 st.divider()
-st.subheader("⚽ 波膽 - 馬會格仔 (賠率留空，有需要先入)")
+st.subheader("⚽ 波膽 - 馬會格仔 (賠率留空)")
 
-# 馬會標準波膽格
 scores_grid=[
-    ["1-0","2-0","2-1","3-0","3-1","3-2","4-0","4-1","4-2","5-0","5-1","其他主勝"],
-    ["0-0","1-1","2-2","3-3","0-1","0-2","1-2","0-3","1-3","2-3","0-4","其他和/客勝"],
+    ["1-0","2-0","2-1","3-0","3-1","3-2","4-0","4-1","其他主勝"],
+    ["0-0","1-1","2-2","0-1","0-2","1-2","0-3","1-3","其他客勝/和"],
 ]
 
-# 計算過往命中
 combined_scores=Counter()
 if sA and sA.get('波膽'): combined_scores+=sA.get('波膽')
 if sH and sH.get('波膽'): combined_scores+=sH.get('波膽')
@@ -258,9 +257,8 @@ for row in scores_grid:
                 ev=(hit/100*o-1)*100
                 st.caption(f"EV {ev:.1f}% {'🔥' if ev>15 else '✅' if ev>5 else ''}")
 
-# 半場波膽格仔
 st.write("**半場波膽**")
-ht_grid=[["1-0","2-0","2-1","0-0","1-1","0-1","0-2","1-2","其他"]]
+ht_grid=[["1-0","2-0","0-0","1-1","0-1","0-2","其他"]]
 for row in ht_grid:
     cols=st.columns(len(row))
     for i,sc in enumerate(row):
@@ -276,7 +274,6 @@ for row in ht_grid:
                 ev=(hit/100*o-1)*100
                 st.caption(f"EV {ev:.1f}%")
 
-# 總結
 st.divider()
 rows=[]
 for key,label,hit in [
@@ -290,24 +287,16 @@ for key,label,hit in [
     o=st.session_state.odds.get(key,0)
     if o>0:
         ev=(hit/100*o-1)*100
-        rows.append({"組合":label,"命中":f"{hit:.1f}%","賠率":o,"EV":f"{ev:.1f}%","回報/100":f"${ev:.1f}","評級":"🔥超值" if ev>15 else "✅值博" if ev>5 else "一般"})
+        rows.append({"組合":label,"命中":f"{hit:.1f}%","賠率":o,"EV":f"{ev:.1f}%","回報/100":f"${ev:.1f}"})
+
 for _,r in edited_ou.iterrows():
     o=float(r["賠率"])
     if o>0:
         ev=(float(r["命中值"])/100*o-1)*100
-        rows.append({"組合":r["盤口"],"命中":r["過往"],"賠率":o,"EV":f"{ev:.1f}%","回報/100":f"${ev:.1f}","評級":"🔥超值" if ev>15 else "✅值博" if ev>5 else "一般"})
-for sc in scores_grid[0]+scores_grid[1]+ht_grid[0]:
-    for prefix in [f"cs_{sc}", f"hcs_{sc}"]:
-        o=st.session_state.odds.get(prefix,0)
-        if o>0:
-            hit=get_hit(sc)
-            ev=(hit/100*o-1)*100
-            rows.append({"組合":f"波膽 {sc}","命中":f"{hit:.1f}%","賠率":o,"EV":f"{ev:.1f}%","回報/100":f"${ev:.1f}","評級":"🔥超值" if ev>15 else "✅值博" if ev>5 else "一般"})
+        rows.append({"組合":r["盤口"],"命中":r["過往"],"賠率":o,"EV":f"{ev:.1f}%","回報/100":f"${ev:.1f}"})
 
 if rows:
-    st.subheader("📈 總回報 (用你入嘅賠率)")
+    st.subheader("📈 總回報")
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     best=max(rows, key=lambda x: float(x['EV'].replace('%','')))
     st.success(f"🏆 最值博: {best['組合']} {best['命中']} @ {best['賠率']} EV {best['EV']}")
-else:
-    st.info("👆 波膽格仔賠率留空，有需要先手入，入完自動計過往命中同EV")
